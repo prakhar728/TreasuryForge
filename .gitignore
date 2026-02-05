@@ -1,0 +1,17 @@
+node_modules
+dist
+build
+.env
+.DS_Store
+out
+cache
+broadcast
+artifacts
+
+# Plans (local only)
+plans/
+
+# Circle secrets (DO NOT COMMIT)
+circle-recovery.backup
+circle-config.generated.txt
+*.backup

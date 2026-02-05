@@ -1,0 +1,37 @@
+{
+  "name": "treasureforge-agent",
+  "version": "0.1.0",
+  "description": "Autonomous RWA-backed treasury optimizer agent",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "start": "node --loader ts-node/esm src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "test": "vitest",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "setup:circle": "tsx scripts/setup-circle.ts"
+  },
+  "dependencies": {
+    "ethers": "^6.10.0",
+    "dotenv": "^16.3.1",
+    "@mysten/sui.js": "^0.47.0",
+    "@lifi/sdk": "^2.1.0",
+    "@circle-fin/developer-controlled-wallets": "^1.0.0",
+    "axios": "^1.6.2",
+    "bs58": "^5.0.0",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.2",
+    "tsx": "^4.7.0",
+    "ts-node": "^10.9.2",
+    "vitest": "^1.0.0",
+    "eslint": "^8.55.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.2",
+    "@typescript-eslint/parser": "^6.13.2",
+    "prettier": "^3.1.1"
+  }
+}

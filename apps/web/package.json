@@ -1,0 +1,33 @@
+{
+  "name": "treasureforge-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext .tsx,.ts",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\""
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "ethers": "^6.10.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.37",
+    "@types/react-dom": "^18.2.15",
+    "@types/node": "^20.10.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "typescript": "^5.3.2",
+    "vite": "^5.0.7",
+    "tailwindcss": "^3.3.6",
+    "postcss": "^8.4.31",
+    "autoprefixer": "^10.4.16",
+    "eslint": "^8.55.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.2",
+    "@typescript-eslint/parser": "^6.13.2",
+    "prettier": "^3.1.1"
+  }
+}

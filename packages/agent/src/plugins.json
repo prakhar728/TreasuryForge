@@ -1,0 +1,12 @@
+{
+  "active": ["arc-rebalance"],
+  "arc-rebalance": {
+    "pollInterval": 300000
+  },
+  "lifi-bridge": {
+    "enabled": false
+  },
+  "sui-yield": {
+    "enabled": false
+  }
+}
