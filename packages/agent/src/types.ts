@@ -1,3 +1,12 @@
+export interface ChainConfig {
+  name: string;
+  chainId: number;
+  rpcUrl: string;
+  usdcAddress: string;
+  gatewayWallet: string;
+  gatewayMinter: string;
+}
+
 export interface PluginContext {
   arcRpcUrl: string;
   vaultAddress: string;
@@ -5,6 +14,12 @@ export interface PluginContext {
   privateKey: string;
   storkApiKey: string;
   pollInterval: number;
+  // USYC (RWA) addresses
+  usycAddress: string;
+  usycTellerAddress: string;
+  usycEntitlementsAddress: string;
+  // Circle Gateway (cross-chain)
+  gatewayChains: ChainConfig[];
 }
 
 export interface YieldOpportunity {

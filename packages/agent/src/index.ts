@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
-import { Plugin, PluginContext, YieldOpportunity } from "./types.js";
+import { Plugin, PluginContext, YieldOpportunity, ChainConfig } from "./types.js";
 import { arcRebalancePlugin } from "./plugins/arc-rebalance.js";
+import { gatewayYieldPlugin } from "./plugins/gateway-yield.js";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const pluginsConfig = require("./plugins.json");
@@ -8,14 +9,51 @@ const pluginsConfig = require("./plugins.json");
 dotenv.config({ path: "../../.env" });
 
 // ============================================================
+// Gateway Chain Configurations
+// ============================================================
+
+const GATEWAY_CHAINS: ChainConfig[] = [
+  {
+    name: "arc",
+    chainId: 5042002,
+    rpcUrl: process.env.ARC_RPC_URL || "https://rpc.testnet.arc.network",
+    usdcAddress: process.env.ARC_USDC_ADDRESS || "0x3600000000000000000000000000000000000000",
+    gatewayWallet: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+    gatewayMinter: "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
+  },
+  {
+    name: "ethereum",
+    chainId: 11155111,
+    rpcUrl: process.env.ETH_SEPOLIA_RPC_URL || "https://rpc.sepolia.org",
+    usdcAddress: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", // Sepolia USDC
+    gatewayWallet: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+    gatewayMinter: "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
+  },
+  {
+    name: "base",
+    chainId: 84532,
+    rpcUrl: process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
+    usdcAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // Base Sepolia USDC
+    gatewayWallet: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+    gatewayMinter: "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
+  },
+  {
+    name: "avalanche",
+    chainId: 43113,
+    rpcUrl: process.env.AVAX_FUJI_RPC_URL || "https://api.avax-test.network/ext/bc/C/rpc",
+    usdcAddress: "0x5425890298aed601595a70AB815c96711a31Bc65", // Fuji USDC
+    gatewayWallet: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+    gatewayMinter: "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
+  },
+];
+
+// ============================================================
 // Plugin Registry
 // ============================================================
 
 const PLUGIN_REGISTRY: Record<string, Plugin> = {
   "arc-rebalance": arcRebalancePlugin,
-  // Phase 2:
-  // "lifi-bridge": lifiBridgePlugin,
-  // "sui-yield": suiYieldPlugin,
+  "gateway-yield": gatewayYieldPlugin,
 };
 
 function loadActivePlugins(): Plugin[] {
@@ -56,6 +94,12 @@ class TreasuryAgent {
       privateKey: process.env.PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY || "",
       storkApiKey: process.env.STORK_API_KEY || "",
       pollInterval: parseInt(process.env.AGENT_POLL_INTERVAL || "300000"),
+      // USYC (RWA) addresses
+      usycAddress: process.env.ARC_USYC_ADDRESS || "0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C",
+      usycTellerAddress: process.env.ARC_USYC_TELLER || "0x9fdF14c5B14173D74C08Af27AebFf39240dC105A",
+      usycEntitlementsAddress: process.env.ARC_USYC_ENTITLEMENTS || "0xcc205224862c7641930c87679e98999d23c26113",
+      // Circle Gateway (cross-chain)
+      gatewayChains: GATEWAY_CHAINS,
     };
 
     this.pollInterval = this.ctx.pollInterval;

@@ -1,12 +1,10 @@
 {
-  "active": ["arc-rebalance"],
+  "active": ["arc-rebalance", "gateway-yield"],
   "arc-rebalance": {
     "pollInterval": 300000
   },
-  "lifi-bridge": {
-    "enabled": false
-  },
-  "sui-yield": {
-    "enabled": false
+  "gateway-yield": {
+    "pollInterval": 300000,
+    "yieldDiffThreshold": 1.0
   }
 }
