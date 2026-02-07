@@ -3,6 +3,7 @@ import axios from "axios";
 import { Plugin, PluginContext, YieldOpportunity, RebalanceAction } from "../types.js";
 import { TREASURY_VAULT_ABI } from "../abi/TreasuryVault.js";
 import { USYC_TOKEN_ABI, USYC_TELLER_ABI, USYC_ENTITLEMENTS_ABI } from "../abi/USYC.js";
+import { logExplorerTx } from "../utils/tx-links.js";
 
 // ============================================================
 // State tracking for USYC positions (in-memory for MVP)
@@ -177,10 +178,12 @@ async function depositToUSYC(
     );
     const approveTx = await usdc.approve(ctx.usycTellerAddress, amount);
     await approveTx.wait();
+    logExplorerTx("arc", approveTx.hash, "USDC approve (USYC)");
 
     // Deposit to get USYC shares
     const depositTx = await usycTeller.deposit(amount, agentAddress);
     const receipt = await depositTx.wait();
+    logExplorerTx("arc", receipt.hash, "USYC deposit");
 
     // Get shares received (from events or query balance diff)
     const { usyc } = getContracts(ctx);
@@ -243,10 +246,12 @@ async function redeemFromUSYC(
     // Approve USYC spending by Teller (if needed)
     const approveTx = await usyc.approve(ctx.usycTellerAddress, position.usycShares);
     await approveTx.wait();
+    logExplorerTx("arc", approveTx.hash, "USYC approve");
 
     // Redeem USYC for USDC
     const redeemTx = await usycTeller.redeem(position.usycShares, agentAddress, agentAddress);
     const receipt = await redeemTx.wait();
+    logExplorerTx("arc", receipt.hash, "USYC redeem");
 
     // Calculate profit
     const usdcReturned = await usycTeller.previewRedeem(position.usycShares);
@@ -362,6 +367,7 @@ export const arcRebalancePlugin: Plugin = {
         );
         const repayTx = await vault.repayRWAFor(user, repayAmount);
         const repayReceipt = await repayTx.wait();
+        logExplorerTx("arc", repayReceipt.hash, "Vault repay");
 
         actions.push({
           type: "repay",
@@ -437,6 +443,7 @@ export const arcRebalancePlugin: Plugin = {
         const borrowTx = await vault.borrowRWA(user, borrowAmount, ctx.usdcAddress);
         const borrowReceipt = await borrowTx.wait();
         console.log(`[Arc] Borrow tx: ${borrowReceipt.hash}`);
+        logExplorerTx("arc", borrowReceipt.hash, "Vault borrow");
 
         actions.push({
           type: "borrow",

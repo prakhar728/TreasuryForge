@@ -1,5 +1,5 @@
 {
-  "active": ["arc-rebalance", "gateway-yield", "sui-yield"],
+  "active": ["arc-rebalance", "gateway-yield"],
   "arc-rebalance": {
     "pollInterval": 300000
   },

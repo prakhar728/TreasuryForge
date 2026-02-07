@@ -7,6 +7,7 @@ import { createRequire } from "module";
 import { ethers } from "ethers";
 import { TREASURY_VAULT_ABI } from "./abi/TreasuryVault.js";
 import { initAgentApi, pushLog, setAgentState, type Position, type Signal } from "./utils/agent-api.js";
+import { AgentStorage } from "./utils/agent-storage.js";
 const require = createRequire(import.meta.url);
 const pluginsConfig = require("./plugins.json");
 
@@ -88,9 +89,16 @@ class TreasuryAgent {
   private pollInterval: number;
   private running = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private storage: AgentStorage | null = null;
 
   constructor() {
     this.plugins = loadActivePlugins();
+    try {
+      this.storage = new AgentStorage();
+    } catch (error) {
+      console.warn("[Agent] Storage unavailable:", error);
+      this.storage = null;
+    }
 
     this.ctx = {
       arcRpcUrl: process.env.ARC_RPC_URL || "https://sepolia.arc.build/rpc",
@@ -190,6 +198,24 @@ class TreasuryAgent {
           detail: "Deposit to begin agent management",
           tone: "sky",
         });
+      }
+
+      if (this.storage) {
+        try {
+          const aavePositions = this.storage.listAavePositions();
+          for (const pos of aavePositions) {
+            const amount = Number(pos.usdcAmount || "0").toFixed(2);
+            const apy = Number(pos.apy || 0).toFixed(2);
+            positions.push({
+              name: `Aave ${pos.chain}`,
+              status: pos.status === "active" ? "Active" : pos.status,
+              detail: `User ${pos.user.slice(0, 6)}... · Supplied ${amount} USDC · APY ${apy}%`,
+              tone: pos.status === "active" ? "emerald" : "amber",
+            });
+          }
+        } catch (error) {
+          console.warn("[Agent] Failed to load Aave positions:", error);
+        }
       }
 
       return positions;

@@ -3,15 +3,14 @@
 
 export const GATEWAY_WALLET_ABI = [
   // Deposit USDC to burn it and add to unified balance
-  "function deposit(uint256 amount) external",
-  "function deposit(uint256 amount, bytes32 destinationDomain, bytes32 mintRecipient) external",
+  "function deposit(address token, uint256 value) external",
   // Events
   "event DepositForBurn(uint64 indexed nonce, address indexed burnToken, uint256 amount, address indexed depositor, bytes32 mintRecipient, uint32 destinationDomain)",
 ];
 
 export const GATEWAY_MINTER_ABI = [
   // Mint USDC from unified balance
-  "function mint(uint256 amount) external",
+  "function gatewayMint(bytes attestationPayload, bytes signature) external",
   // Check available unified balance
   "function unifiedBalance(address account) external view returns (uint256)",
   // Events
@@ -27,7 +26,7 @@ export const ERC20_ABI = [
 
 // Chain domain IDs for Circle CCTP
 export const CHAIN_DOMAINS: Record<string, number> = {
-  "arc": 10,         // Arc testnet domain
+  "arc": 26,         // Arc testnet domain
   "ethereum": 0,     // Ethereum Sepolia
   "base": 6,         // Base Sepolia
   "avalanche": 1,    // Avalanche Fuji

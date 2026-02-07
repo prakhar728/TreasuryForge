@@ -25,19 +25,33 @@ export interface SuiPositionRecord {
   status: string;
 }
 
+export interface AavePositionRecord {
+  user: string;
+  chain: string;
+  protocol: string;
+  asset: string;
+  usdcAmount: string;
+  aToken: string;
+  apy: number;
+  depositTime: number;
+  txHash?: string | null;
+  status: string;
+  updatedAt: number;
+}
+
 export class AgentStorage {
   private db: Database.Database;
-  private masterKey: Buffer;
+  private masterKey: Buffer | null;
 
   constructor(params?: { dbPath?: string; masterKey?: string }) {
     const dbPath = params?.dbPath || process.env.TREASURYFORGE_DB_PATH || DEFAULT_DB_PATH;
     const masterKey = params?.masterKey || process.env.SUI_KEYSTORE_MASTER_KEY;
 
     if (!masterKey) {
-      throw new Error("Missing SUI_KEYSTORE_MASTER_KEY for encrypted storage");
+      this.masterKey = null;
+    } else {
+      this.masterKey = normalizeMasterKey(masterKey);
     }
-
-    this.masterKey = normalizeMasterKey(masterKey);
 
     ensureDir(path.dirname(dbPath));
     this.db = new Database(dbPath);
@@ -65,12 +79,34 @@ export class AgentStorage {
         bridge_tx_hash TEXT,
         status TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS aave_positions (
+        user TEXT NOT NULL,
+        chain TEXT NOT NULL,
+        protocol TEXT NOT NULL,
+        asset TEXT NOT NULL,
+        usdc_amount TEXT NOT NULL,
+        a_token TEXT NOT NULL,
+        apy REAL NOT NULL,
+        deposit_time INTEGER NOT NULL,
+        tx_hash TEXT,
+        status TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (user, chain, protocol)
+      );
     `);
+  }
+
+  private requireMasterKey(): Buffer {
+    if (!this.masterKey) {
+      throw new Error("Missing SUI_KEYSTORE_MASTER_KEY for encrypted storage");
+    }
+    return this.masterKey;
   }
 
   upsertSuiKey(user: string, suiAddress: string, suiPrivateKey: string): void {
     const now = Date.now();
-    const encrypted = encryptString(suiPrivateKey, this.masterKey);
+    const encrypted = encryptString(suiPrivateKey, this.requireMasterKey());
 
     const existing = this.db.prepare("SELECT user FROM sui_keys WHERE user = ?").get(user);
     if (existing) {
@@ -99,7 +135,7 @@ export class AgentStorage {
 
     if (!row) return null;
 
-    const privateKey = decryptString(row.encryptedKey, this.masterKey);
+    const privateKey = decryptString(row.encryptedKey, this.requireMasterKey());
     return { suiAddress: row.suiAddress, privateKey };
   }
 
@@ -108,7 +144,7 @@ export class AgentStorage {
     const keypair = Ed25519Keypair.generate();
     const suiAddress = keypair.getPublicKey().toSuiAddress();
     const privateKey = keypair.getSecretKey();
-    const encrypted = encryptString(privateKey, this.masterKey);
+    const encrypted = encryptString(privateKey, this.requireMasterKey());
 
     this.db
       .prepare(
@@ -177,6 +213,66 @@ export class AgentStorage {
 
   deletePosition(user: string): void {
     this.db.prepare("DELETE FROM positions WHERE user = ?").run(user);
+  }
+
+  upsertAavePosition(record: AavePositionRecord): void {
+    const existing = this.db
+      .prepare("SELECT user FROM aave_positions WHERE user = ? AND chain = ? AND protocol = ?")
+      .get(record.user, record.chain, record.protocol);
+
+    if (existing) {
+      this.db
+        .prepare(
+          `UPDATE aave_positions
+           SET asset = ?, usdc_amount = ?, a_token = ?, apy = ?, deposit_time = ?, tx_hash = ?, status = ?, updated_at = ?
+           WHERE user = ? AND chain = ? AND protocol = ?`
+        )
+        .run(
+          record.asset,
+          record.usdcAmount,
+          record.aToken,
+          record.apy,
+          record.depositTime,
+          record.txHash || null,
+          record.status,
+          record.updatedAt,
+          record.user,
+          record.chain,
+          record.protocol
+        );
+      return;
+    }
+
+    this.db
+      .prepare(
+        `INSERT INTO aave_positions
+         (user, chain, protocol, asset, usdc_amount, a_token, apy, deposit_time, tx_hash, status, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        record.user,
+        record.chain,
+        record.protocol,
+        record.asset,
+        record.usdcAmount,
+        record.aToken,
+        record.apy,
+        record.depositTime,
+        record.txHash || null,
+        record.status,
+        record.updatedAt
+      );
+  }
+
+  listAavePositions(): AavePositionRecord[] {
+    return this.db.prepare("SELECT * FROM aave_positions").all() as AavePositionRecord[];
+  }
+
+  getAavePosition(user: string, chain: string, protocol: string): AavePositionRecord | null {
+    const row = this.db
+      .prepare("SELECT * FROM aave_positions WHERE user = ? AND chain = ? AND protocol = ?")
+      .get(user, chain, protocol);
+    return (row as AavePositionRecord) || null;
   }
 }
 
