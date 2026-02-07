@@ -5,7 +5,15 @@ export const TREASURY_VAULT_ABI = [
   "function balanceOf(address user) external view returns (uint256)",
   "function setPolicy(uint256 yieldThreshold, uint256 maxBorrowAmount, string calldata strategy) external",
   "function getPolicy(address user) external view returns (tuple(uint256 yieldThreshold, uint256 maxBorrowAmount, bool enabled, string strategy))",
+  "function setSuiAddress(bytes32 suiAddress) external",
+  "function setSuiAddressForUser(address user, bytes32 suiAddress) external",
+  "function getSuiAddress(address user) external view returns (bytes32)",
+  "function requestWithdraw(uint256 amount) external",
+  "function cancelWithdraw() external",
+  "function processWithdraw(address user) external",
+  "function getWithdrawRequest(address user) external view returns (tuple(uint256 amount, uint256 requestTime, bool pending))",
   "function repayRWA(uint256 amount) external",
+  "function repayRWAFor(address user, uint256 amount) external",
   "function getBorrowedRWA(address user) external view returns (tuple(uint256 amount, uint256 borrowTime, address rwaToken))",
 
   // Agent functions
@@ -31,4 +39,8 @@ export const TREASURY_VAULT_ABI = [
   "event RWARepaid(address indexed user, uint256 amount)",
   "event AgentUpdated(address indexed newAgent)",
   "event Rebalanced(address indexed user, uint256 amount, string action)",
+  "event SuiAddressSet(address indexed user, bytes32 suiAddress)",
+  "event WithdrawRequested(address indexed user, uint256 amount, uint256 timestamp)",
+  "event WithdrawCanceled(address indexed user, uint256 timestamp)",
+  "event WithdrawProcessed(address indexed user, uint256 amount, uint256 timestamp)",
 ] as const;

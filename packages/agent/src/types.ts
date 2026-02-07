@@ -7,6 +7,15 @@ export interface ChainConfig {
   gatewayMinter: string;
 }
 
+export interface SuiConfig {
+  rpcUrl: string;
+  address?: string; // Sui wallet address (derived from suiPrivateKey)
+  usdcPackageId: string;
+  usdcTreasuryId: string;
+  deepbookPackageId: string;
+  poolId: string; // USDC/SUI pool
+}
+
 export interface PluginContext {
   arcRpcUrl: string;
   vaultAddress: string;
@@ -20,6 +29,9 @@ export interface PluginContext {
   usycEntitlementsAddress: string;
   // Circle Gateway (cross-chain)
   gatewayChains: ChainConfig[];
+  // Sui integration
+  suiConfig: SuiConfig;
+  suiPrivateKey?: string; // Optional separate Sui key
 }
 
 export interface YieldOpportunity {
@@ -27,6 +39,7 @@ export interface YieldOpportunity {
   yield: number; // percentage
   confidence: number; // 0-1
   source: string; // "stork", "deepbook", etc.
+  strategy?: string; // "RWA_Loan", "DeFi_Yield", "Stablecoin_Carry"
 }
 
 export interface RebalanceAction {

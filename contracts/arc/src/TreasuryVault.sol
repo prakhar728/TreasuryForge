@@ -43,6 +43,18 @@ contract TreasuryVault is Ownable, ReentrancyGuard {
     mapping(address => UserDeposit) public userDeposits;
     mapping(address => Policy) public userPolicies;
 
+    // Sui address mapping (stored as bytes32)
+    mapping(address => bytes32) public userSuiAddresses;
+
+    // Withdrawal request tracking
+    struct WithdrawRequest {
+        uint256 amount;
+        uint256 requestTime;
+        bool pending;
+    }
+
+    mapping(address => WithdrawRequest) public withdrawRequests;
+
     // Borrowed RWA tracking
     struct BorrowedRWA {
         uint256 amount;
@@ -61,6 +73,10 @@ contract TreasuryVault is Ownable, ReentrancyGuard {
     event RWARepaid(address indexed user, uint256 amount);
     event AgentUpdated(address indexed newAgent);
     event Rebalanced(address indexed user, uint256 amount, string action);
+    event SuiAddressSet(address indexed user, bytes32 suiAddress);
+    event WithdrawRequested(address indexed user, uint256 amount, uint256 timestamp);
+    event WithdrawCanceled(address indexed user, uint256 timestamp);
+    event WithdrawProcessed(address indexed user, uint256 amount, uint256 timestamp);
 
     // ============================================================================
     // Constructor & Initialization
@@ -159,6 +175,36 @@ contract TreasuryVault is Ownable, ReentrancyGuard {
     }
 
     /**
+     * @notice Set Sui address for cross-chain operations
+     * @param suiAddress Sui address as bytes32 (0x...)
+     */
+    function setSuiAddress(bytes32 suiAddress) external {
+        require(suiAddress != bytes32(0), "Invalid Sui address");
+        userSuiAddresses[msg.sender] = suiAddress;
+        emit SuiAddressSet(msg.sender, suiAddress);
+    }
+
+    /**
+     * @notice Set Sui address for a user (agent only)
+     * @param user User address
+     * @param suiAddress Sui address as bytes32
+     */
+    function setSuiAddressForUser(address user, bytes32 suiAddress) external {
+        require(msg.sender == agent, "Only agent can set");
+        require(user != address(0), "Invalid user");
+        require(suiAddress != bytes32(0), "Invalid Sui address");
+        userSuiAddresses[user] = suiAddress;
+        emit SuiAddressSet(user, suiAddress);
+    }
+
+    /**
+     * @notice Get Sui address for a user
+     */
+    function getSuiAddress(address user) external view returns (bytes32) {
+        return userSuiAddresses[user];
+    }
+
+    /**
      * @notice Get user's policy
      */
     function getPolicy(address user) external view returns (Policy memory) {
@@ -216,10 +262,110 @@ contract TreasuryVault is Ownable, ReentrancyGuard {
     }
 
     /**
+     * @notice Repay borrowed RWA on behalf of a user (agent only)
+     * @param user User address
+     * @param amount Amount to repay
+     */
+    function repayRWAFor(address user, uint256 amount) external {
+        require(msg.sender == agent, "Only agent can repay");
+        BorrowedRWA storage borrowedRWA = borrowedRWAs[user];
+        require(borrowedRWA.amount > 0, "No borrowed RWA");
+        require(amount <= borrowedRWA.amount, "Repay amount exceeds borrowed");
+
+        borrowedRWA.amount -= amount;
+        totalBorrowed -= amount;
+
+        if (borrowedRWA.amount == 0) {
+            borrowedRWA.rwaToken = address(0);
+            borrowedRWA.borrowTime = 0;
+        }
+
+        emit RWARepaid(user, amount);
+    }
+
+    /**
      * @notice Get borrowed RWA info
      */
     function getBorrowedRWA(address user) external view returns (BorrowedRWA memory) {
         return borrowedRWAs[user];
+    }
+
+    // ============================================================================
+    // Withdraw Requests (User → Agent)
+    // ============================================================================
+
+    /**
+     * @notice Request a withdrawal; agent will process when ready
+     * @param amount Amount of USDC to withdraw
+     */
+    function requestWithdraw(uint256 amount) external {
+        UserDeposit storage userDeposit = userDeposits[msg.sender];
+        require(userDeposit.active, "No active deposit");
+        require(amount > 0, "Withdraw amount must be > 0");
+        require(userDeposit.amount >= amount, "Insufficient balance to withdraw");
+
+        withdrawRequests[msg.sender] = WithdrawRequest({
+            amount: amount,
+            requestTime: block.timestamp,
+            pending: true
+        });
+
+        emit WithdrawRequested(msg.sender, amount, block.timestamp);
+    }
+
+    /**
+     * @notice Cancel a pending withdrawal request
+     */
+    function cancelWithdraw() external {
+        WithdrawRequest storage request = withdrawRequests[msg.sender];
+        require(request.pending, "No pending request");
+
+        request.pending = false;
+        request.amount = 0;
+        request.requestTime = 0;
+
+        emit WithdrawCanceled(msg.sender, block.timestamp);
+    }
+
+    /**
+     * @notice Process a user's withdrawal request (agent only)
+     * @param user User address
+     */
+    function processWithdraw(address user) external nonReentrant {
+        require(msg.sender == agent, "Only agent can process");
+        WithdrawRequest storage request = withdrawRequests[user];
+        require(request.pending, "No pending request");
+
+        UserDeposit storage userDeposit = userDeposits[user];
+        require(userDeposit.active, "No active deposit");
+        require(userDeposit.amount >= request.amount, "Insufficient balance to withdraw");
+
+        // Block withdrawal if RWA is still borrowed
+        if (borrowedRWAs[user].amount > 0) {
+            require(false, "Cannot withdraw while RWA borrowed - repay first");
+        }
+
+        uint256 amount = request.amount;
+        userDeposit.amount -= amount;
+        totalDeposited -= amount;
+
+        if (userDeposit.amount == 0) {
+            userDeposit.active = false;
+        }
+
+        request.pending = false;
+        request.amount = 0;
+        request.requestTime = 0;
+
+        usdc.safeTransfer(user, amount);
+        emit WithdrawProcessed(user, amount, block.timestamp);
+    }
+
+    /**
+     * @notice Get withdraw request for a user
+     */
+    function getWithdrawRequest(address user) external view returns (WithdrawRequest memory) {
+        return withdrawRequests[user];
     }
 
     // ============================================================================

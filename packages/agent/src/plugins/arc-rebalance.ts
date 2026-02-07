@@ -25,6 +25,8 @@ const MIN_HOLD_TIME_MS = 2 * 60 * 1000;
 // ============================================================
 let cachedYield: { value: number; timestamp: number } | null = null;
 const CACHE_TTL = 60_000;
+const STORK_ASSET_ID = process.env.STORK_ASSET_ID || "USDCUSD";
+const STORK_REST_URL = process.env.STORK_REST_URL || "https://rest.jp.stork-oracle.network/v1/prices/latest";
 
 async function fetchStorkYield(apiKey: string): Promise<number> {
   if (cachedYield && Date.now() - cachedYield.timestamp < CACHE_TTL) {
@@ -40,12 +42,17 @@ async function fetchStorkYield(apiKey: string): Promise<number> {
   }
 
   try {
-    const res = await axios.get("https://rest.jp.stork-oracle.network/v1/prices/latest", {
+    const res = await axios.get(STORK_REST_URL, {
       headers: { Authorization: `Basic ${apiKey}` },
-      params: { assets: "USDCUSD" },
+      params: { assets: STORK_ASSET_ID },
     });
 
-    const price = res.data?.data?.USDCUSD?.price ?? 1.0;
+    const priceRaw = extractStorkPrice(res.data, STORK_ASSET_ID);
+    const price = priceRaw ?? 1;
+    if (!Number.isFinite(price)) {
+      console.warn("[Stork] Invalid price payload, using cached/mock");
+      return cachedYield?.value ?? 6.5;
+    }
     const impliedYield = Math.abs(1.0 - price) * 100 + 5.0;
 
     cachedYield = { value: impliedYield, timestamp: Date.now() };
@@ -55,6 +62,52 @@ async function fetchStorkYield(apiKey: string): Promise<number> {
     console.error("[Stork] API error, using fallback:", error);
     return cachedYield?.value ?? 6.5;
   }
+}
+
+function extractStorkPrice(payload: any, assetId: string): number | null {
+  if (!payload) return null;
+  const data = payload.data ?? payload;
+
+  // Object shape: { data: { ASSET: { price: "..." } } }
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const entry = data[assetId];
+    if (entry?.price != null) {
+      return normalizeStorkPrice(entry.price);
+    }
+  }
+
+  // Array shape: { data: [ { asset_id, price, ... } ] }
+  if (Array.isArray(data)) {
+    const entry = data.find((item) => item?.asset_id === assetId);
+    if (entry?.price != null) {
+      return normalizeStorkPrice(entry.price);
+    }
+  }
+
+  return null;
+}
+
+function normalizeStorkPrice(raw: any): number {
+  // Stork REST returns quantized price: integer string scaled by 1e18.
+  // Avoid Number() on huge integers; parse as string and insert decimal.
+  const value = typeof raw === "string" ? raw : String(raw ?? "");
+  if (/e/i.test(value)) {
+    const asNum = Number(value);
+    const scaled = asNum / 1e18;
+    return Number.isFinite(scaled) ? scaled : NaN;
+  }
+
+  const digits = value.replace(/[^0-9]/g, "");
+  if (!digits) return NaN;
+
+  // Left-pad to ensure at least 19 digits so we can split 18 decimals safely.
+  const padded = digits.length <= 18 ? digits.padStart(19, "0") : digits;
+  const intPart = padded.slice(0, -18);
+  const fracPart = padded.slice(-18).replace(/0+$/, "");
+  const asString = intPart + (fracPart ? `.${fracPart}` : "");
+
+  const parsed = Number(asString);
+  return Number.isFinite(parsed) ? parsed : NaN;
 }
 
 // ============================================================
@@ -232,6 +285,7 @@ export const arcRebalancePlugin: Plugin = {
         yield: currentYield,
         confidence: ctx.storkApiKey && ctx.storkApiKey !== "your_stork_api_key_here" ? 0.95 : 0.5,
         source: "stork",
+        strategy: "RWA_Loan",
       },
     ];
   },
@@ -293,14 +347,26 @@ export const arcRebalancePlugin: Plugin = {
 
       // Repay vault
       try {
-        console.log(`[Arc] Repaying vault for ${user.slice(0, 10)}...`);
-        const repayTx = await vault.repayRWA(redeemResult.usdcReturned);
+        const borrowed = await vault.getBorrowedRWA(user);
+        if (borrowed.amount === 0n) {
+          console.log(`[Arc] No borrowed RWA for ${user.slice(0, 10)}..., skipping repay`);
+          continue;
+        }
+
+        const repayAmount =
+          redeemResult.usdcReturned > borrowed.amount ? borrowed.amount : redeemResult.usdcReturned;
+
+        console.log(
+          `[Arc] Repaying vault for ${user.slice(0, 10)}... ` +
+          `(${ethers.formatUnits(repayAmount, 6)} USDC)`
+        );
+        const repayTx = await vault.repayRWAFor(user, repayAmount);
         const repayReceipt = await repayTx.wait();
 
         actions.push({
           type: "repay",
           chain: "arc",
-          amount: redeemResult.usdcReturned,
+          amount: repayAmount,
           details: {
             user,
             profit: redeemResult.profit.toString(),
@@ -345,6 +411,10 @@ export const arcRebalancePlugin: Plugin = {
         const policy = await vault.getPolicy(user);
         if (!policy.enabled) {
           console.log(`[Arc] ${user.slice(0, 10)}... policy not enabled`);
+          continue;
+        }
+        if (policy.strategy !== "RWA_Loan") {
+          console.log(`[Arc] ${user.slice(0, 10)}... policy strategy ${policy.strategy}, skipping RWA`);
           continue;
         }
 

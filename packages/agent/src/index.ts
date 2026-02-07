@@ -1,8 +1,12 @@
 import dotenv from "dotenv";
-import { Plugin, PluginContext, YieldOpportunity, ChainConfig } from "./types.js";
+import { Plugin, PluginContext, YieldOpportunity, ChainConfig, SuiConfig } from "./types.js";
 import { arcRebalancePlugin } from "./plugins/arc-rebalance.js";
 import { gatewayYieldPlugin } from "./plugins/gateway-yield.js";
+import { suiYieldPlugin } from "./plugins/sui-yield.js";
 import { createRequire } from "module";
+import { ethers } from "ethers";
+import { TREASURY_VAULT_ABI } from "./abi/TreasuryVault.js";
+import { initAgentApi, pushLog, setAgentState, type Position, type Signal } from "./utils/agent-api.js";
 const require = createRequire(import.meta.url);
 const pluginsConfig = require("./plugins.json");
 
@@ -54,6 +58,7 @@ const GATEWAY_CHAINS: ChainConfig[] = [
 const PLUGIN_REGISTRY: Record<string, Plugin> = {
   "arc-rebalance": arcRebalancePlugin,
   "gateway-yield": gatewayYieldPlugin,
+  "sui-yield": suiYieldPlugin,
 };
 
 function loadActivePlugins(): Plugin[] {
@@ -100,6 +105,16 @@ class TreasuryAgent {
       usycEntitlementsAddress: process.env.ARC_USYC_ENTITLEMENTS || "0xcc205224862c7641930c87679e98999d23c26113",
       // Circle Gateway (cross-chain)
       gatewayChains: GATEWAY_CHAINS,
+      // Sui integration
+      suiConfig: {
+        rpcUrl: process.env.SUI_RPC_URL || "https://fullnode.testnet.sui.io:443",
+        address: process.env.SUI_ADDRESS,
+        usdcPackageId: process.env.SUI_USDC_PACKAGE || "0x2", // Testnet USDC
+        usdcTreasuryId: process.env.SUI_USDC_TREASURY || "",
+        deepbookPackageId: process.env.SUI_DEEPBOOK_PACKAGE || "0xdee9",
+        poolId: process.env.SUI_POOL_ID || "", // USDC/SUI pool
+      },
+      suiPrivateKey: process.env.SUI_PRIVATE_KEY,
     };
 
     this.pollInterval = this.ctx.pollInterval;
@@ -109,6 +124,85 @@ class TreasuryAgent {
     }
     if (!this.ctx.privateKey) {
       console.warn("[Agent] WARNING: PRIVATE_KEY not set — agent cannot sign transactions");
+    }
+  }
+
+  private async buildPositions(): Promise<Position[]> {
+    try {
+      const provider = new ethers.JsonRpcProvider(this.ctx.arcRpcUrl);
+      const signer = new ethers.Wallet(this.ctx.privateKey, provider);
+      const vault = new ethers.Contract(this.ctx.vaultAddress, TREASURY_VAULT_ABI, signer);
+
+      const depositFilter = vault.filters.Deposited();
+      const currentBlock = await provider.getBlockNumber();
+      const fromBlock = Math.max(0, currentBlock - 50_000);
+
+      const events: ethers.EventLog[] = [];
+      const step = 10_000;
+      for (let start = fromBlock; start <= currentBlock; start += step + 1) {
+        const end = Math.min(currentBlock, start + step);
+        const chunk = await vault.queryFilter(depositFilter, start, end);
+        for (const ev of chunk) {
+          if ("args" in ev) events.push(ev as ethers.EventLog);
+        }
+      }
+
+      const depositors = [...new Set(
+        events.map((e) => e.args[0] as string)
+      )];
+
+      const positions: Position[] = [];
+      const stats = await vault.getVaultStats().catch(() => [0n, 0n, 0n]);
+      const tvl = Number(ethers.formatUnits(stats[0] ?? 0n, 6)).toFixed(2);
+      const borrows = Number(ethers.formatUnits(stats[1] ?? 0n, 6)).toFixed(2);
+
+      for (const user of depositors) {
+        const [deposit, , active] = await vault.userDeposits(user);
+        if (!active) continue;
+        const borrowed = await vault.getBorrowedRWA(user);
+        const policy = await vault.getPolicy(user);
+
+        const depositFmt = Number(ethers.formatUnits(deposit || 0n, 6)).toFixed(2);
+        const borrowedFmt = Number(ethers.formatUnits(borrowed.amount || 0n, 6)).toFixed(2);
+
+        positions.push({
+          name: `User ${user.slice(0, 6)}...${user.slice(-4)}`,
+          status: borrowed.amount > 0n ? "Borrowed" : "Idle",
+          detail: `Deposit ${depositFmt} USDC · Borrowed ${borrowedFmt} · ${policy.strategy || "No policy"}`,
+          tone: borrowed.amount > 0n ? "amber" : "emerald",
+        });
+      }
+
+      if (positions.length === 0) {
+        if ((stats[0] ?? 0n) > 0n) {
+          positions.push({
+            name: "Vault deposits detected",
+            status: "Indexing",
+            detail: `TVL ${tvl} USDC · Borrows ${borrows} · Waiting on depositor logs`,
+            tone: "sky",
+          });
+          return positions;
+        }
+
+        positions.push({
+          name: "No active users",
+          status: "Idle",
+          detail: "Deposit to begin agent management",
+          tone: "sky",
+        });
+      }
+
+      return positions;
+    } catch (error) {
+      console.error("[Agent] Failed to build positions:", error);
+      return [
+        {
+          name: "Positions unavailable",
+          status: "Error",
+          detail: "Check agent RPC connectivity",
+          tone: "rose",
+        },
+      ];
     }
   }
 
@@ -143,6 +237,21 @@ class TreasuryAgent {
       `[Agent] Best opportunity: ${allOpportunities[0].front} at ${allOpportunities[0].yield.toFixed(2)}%`
     );
 
+    // Log best opportunity per strategy (if provided)
+    const bestByStrategy = new Map<string, YieldOpportunity>();
+    for (const opp of allOpportunities) {
+      const key = opp.strategy || "any";
+      const current = bestByStrategy.get(key);
+      if (!current || opp.yield > current.yield) {
+        bestByStrategy.set(key, opp);
+      }
+    }
+    for (const [strategy, opp] of bestByStrategy.entries()) {
+      console.log(
+        `[Agent] Best for ${strategy}: ${opp.front} ${opp.yield.toFixed(2)}% (${opp.source})`
+      );
+    }
+
     // 3. Evaluate + Execute: let each plugin decide and act
     for (const plugin of this.plugins) {
       try {
@@ -166,6 +275,24 @@ class TreasuryAgent {
         console.error(`[${plugin.name}] Execute error:`, error);
       }
     }
+
+    // Update live state for UI
+    const signals: Signal[] = [];
+    for (const [strategy, opp] of bestByStrategy.entries()) {
+      const tone =
+        strategy === "RWA_Loan" ? "amber" :
+        strategy === "Stablecoin_Carry" ? "sky" :
+        "emerald";
+      signals.push({
+        label: `Best ${strategy}`,
+        value: `${opp.front} ${opp.yield.toFixed(2)}%`,
+        meta: opp.source,
+        tone,
+      });
+    }
+
+    const positions = await this.buildPositions();
+    setAgentState({ signals, positions, lastAction: null });
   }
 
   async start(): Promise<void> {
@@ -201,6 +328,27 @@ class TreasuryAgent {
 // ============================================================
 
 const agent = new TreasuryAgent();
+// Capture console output into log buffer for the UI
+const originalLog = console.log.bind(console);
+const originalWarn = console.warn.bind(console);
+const originalError = console.error.bind(console);
+console.log = (...args: any[]) => {
+  const line = args.map(String).join(" ");
+  pushLog(line);
+  originalLog(...args);
+};
+console.warn = (...args: any[]) => {
+  const line = args.map(String).join(" ");
+  pushLog(line);
+  originalWarn(...args);
+};
+console.error = (...args: any[]) => {
+  const line = args.map(String).join(" ");
+  pushLog(line);
+  originalError(...args);
+};
+
+initAgentApi();
 agent.start();
 
 process.on("SIGINT", () => agent.shutdown());

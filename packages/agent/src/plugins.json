@@ -1,10 +1,14 @@
 {
-  "active": ["arc-rebalance", "gateway-yield"],
+  "active": ["arc-rebalance", "gateway-yield", "sui-yield"],
   "arc-rebalance": {
     "pollInterval": 300000
   },
   "gateway-yield": {
     "pollInterval": 300000,
     "yieldDiffThreshold": 1.0
+  },
+  "sui-yield": {
+    "pollInterval": 300000,
+    "yieldThreshold": 7.0
   }
 }
