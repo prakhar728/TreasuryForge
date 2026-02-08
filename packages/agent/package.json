@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && cp src/plugins.json dist/plugins.json",
     "test": "vitest",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
