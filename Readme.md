@@ -4,6 +4,11 @@
 
 TreasuryForge lets teams deposit USDC on Arc, set yield policies, and let an agent route capital into RWA yield (USYC), cross-chain stablecoin carry via Circle Gateway, and DeepBook liquidity on Sui. Every action is streamed to a live UI so users can see exactly why the agent moved funds. We tried to make it a glass box, instead of a black box.
 
+> **IMPORTANT DEMO NOTE — TWO FLOWS**
+> **TESTNET FLOW:** Arc testnet + Circle Gateway are used for vault + agent features.  
+> **MAINNET FLOW (IN VIDEO):** DeepBook liquidity is not available on Sui testnet, so the demo video shows a mainnet flow with Base → Sui bridging and DeepBook deposits.  
+> Once Arc mainnet launches, we can route USDC end‑to‑end using Circle (Arc → Base via unified Gateway, then Base → Sui via CCTP), keeping the entire bridge path on Circle infrastructure.
+
 Built for **ETHGlobal HackMoney 2026** with a focus on:
 - Arc prize tracks: chain‑abstracted USDC liquidity, RWA agentic commerce, and treasury systems.
 - Sui prize track: DeepBook‑powered DeFi with real order‑book signals.
