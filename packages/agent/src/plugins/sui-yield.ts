@@ -436,6 +436,19 @@ async function getBaseSigner(chain: any, ctx: PluginContext) {
   const key = getBasePrivateKey(ctx);
   if (!key) throw new Error("Missing BASE_PRIVATE_KEY (or PRIVATE_KEY) for Base signer");
   const signer = await (await evm()).getSigner(await chain.getRpc(), key);
+  // Force pending nonce usage to avoid "nonce too low" errors.
+  const native = (signer as any)?.unwrap?.();
+  if (native && typeof native.getNonce === "function") {
+    const marker = "__usesPendingNonce";
+    if (!(native as any)[marker]) {
+      const originalGetNonce = native.getNonce.bind(native);
+      native.getNonce = (_blockTag?: any) => originalGetNonce("pending");
+      (native as any)[marker] = true;
+    }
+    if (typeof native.reset === "function") {
+      native.reset();
+    }
+  }
   return signer;
 }
 

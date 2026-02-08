@@ -43,16 +43,6 @@ High‑level flow:
 4. Profits return to Arc and are repaid to the vault.
 5. UI shows every step in real time.
 
-## Demo Flow (5–7 min)
-1. **Open UI** (`apps/web`) and connect MetaMask to Arc Testnet.
-2. **Deposit USDC** and set policy to `RWA_Loan` or `DeFi_Yield`.
-3. **Start agent** (`packages/agent`) and show:
-   - Best yield signals.
-   - Borrow + deposit actions.
-   - Repay events after the demo hold time.
-4. **(Optional) Sui**: run the Base → Sui bridge script and show DeepBook deposit log.
-5. **(Optional) Cross‑chain**: enable Circle Gateway route to Base Sepolia demo.
-
 ## Hackathon Alignment
 ### Arc Prize Tracks
 - **Best Chain‑Abstracted USDC Apps**
