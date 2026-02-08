@@ -15,7 +15,6 @@ import {
 import { createWalletClient, http, type Chain } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { createLocalSuiWallet } from "./sui-wallet.js";
-import type { WalletWithRequiredFeatures } from "@mysten/wallet-standard";
 
 // ============================================================
 // LI.FI Bridge Configuration
@@ -91,11 +90,10 @@ export function initLiFi(configInput: LiFiBridgeConfig): void {
 
     cachedSuiAddress = address;
 
-    providers.push(
-      Sui({
-        getWallet: async () => wallet as unknown as WalletWithRequiredFeatures,
-      }) as SDKProvider
-    );
+    const suiProvider = (Sui as unknown as (opts: { getWallet: () => Promise<any> }) => SDKProvider)({
+      getWallet: async () => wallet as any,
+    });
+    providers.push(suiProvider);
   }
 
   config.setProviders(providers);

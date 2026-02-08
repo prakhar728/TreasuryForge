@@ -105,7 +105,7 @@ const GATEWAY_MAX_BLOCK_HEIGHT = (1n << 256n) - 1n;
 
 const EIP712_DOMAIN = { name: "GatewayWallet", version: "1" } as const;
 
-const EIP712_TYPES = {
+const EIP712_TYPES: Record<string, ethers.TypedDataField[]> = {
   TransferSpec: [
     { name: "version", type: "uint32" },
     { name: "sourceDomain", type: "uint32" },
@@ -127,7 +127,7 @@ const EIP712_TYPES = {
     { name: "maxFee", type: "uint256" },
     { name: "spec", type: "TransferSpec" },
   ],
-} as const;
+};
 
 
 // ============================================================
@@ -283,9 +283,10 @@ async function withdrawFromBaseVault(
     }
 
     const wallet = await getBaseSepoliaSigner(ctx);
+    const walletAddress = await wallet.getAddress();
     const vault = new ethers.Contract(ctx.baseVaultAddress, TREASURY_VAULT_ABI, wallet);
 
-    const vaultBalance = await vault.balanceOf(wallet.address);
+    const vaultBalance = await vault.balanceOf(walletAddress);
     let withdrawAmount = amount;
     if (vaultBalance < withdrawAmount) {
       if (vaultBalance <= 0n) {
@@ -323,12 +324,13 @@ async function supplyToAaveBaseSepolia(
 ): Promise<{ success: boolean; txHash?: string; mocked?: boolean }> {
   try {
     const wallet = await getBaseSepoliaSigner(ctx);
+    const walletAddress = await wallet.getAddress();
 
     const usdcAddress = AaveV3BaseSepolia.ASSETS.USDC.UNDERLYING;
     const poolAddress = AaveV3BaseSepolia.POOL;
 
     const usdc = new ethers.Contract(usdcAddress, ERC20_ABI, wallet);
-    const balance = await usdc.balanceOf(wallet.address);
+    const balance = await usdc.balanceOf(walletAddress);
 
     if (balance < amount) {
       console.log(
@@ -337,14 +339,14 @@ async function supplyToAaveBaseSepolia(
       return { success: false };
     }
 
-    const allowance = await usdc.allowance(wallet.address, poolAddress);
+    const allowance = await usdc.allowance(walletAddress, poolAddress);
     if (allowance < amount) {
       const approveTx = await usdc.approve(poolAddress, amount);
       await approveTx.wait();
     }
 
     const pool = new ethers.Contract(poolAddress, AAVE_V3_POOL_ABI, wallet);
-    const supplyTx = await pool.supply(usdcAddress, amount, wallet.address, 0);
+    const supplyTx = await pool.supply(usdcAddress, amount, walletAddress, 0);
     const receipt = await supplyTx.wait();
 
     console.log(
@@ -416,6 +418,7 @@ async function supplyToCompoundBaseSepolia(
     if (!cometAddress) throw new Error("Missing BASE_SEPOLIA_COMET_ADDRESS");
 
     const wallet = await getBaseSepoliaSigner(ctx);
+    const walletAddress = await wallet.getAddress();
 
     const usdcAddress = AaveV3BaseSepolia.ASSETS.USDC.UNDERLYING;
 
@@ -426,7 +429,7 @@ async function supplyToCompoundBaseSepolia(
     }
 
     const usdc = new ethers.Contract(usdcAddress, ERC20_ABI, wallet);
-    const balance = await usdc.balanceOf(wallet.address);
+    const balance = await usdc.balanceOf(walletAddress);
 
     if (balance < amount) {
       console.log(
@@ -435,7 +438,7 @@ async function supplyToCompoundBaseSepolia(
       return { success: false };
     }
 
-    const allowance = await usdc.allowance(wallet.address, cometAddress);
+    const allowance = await usdc.allowance(walletAddress, cometAddress);
     if (allowance < amount) {
       const approveTx = await usdc.approve(cometAddress, amount);
       await approveTx.wait();
@@ -490,6 +493,7 @@ async function swapCircleToMockUsdcOnBase(
     console.log(`[Base Sepolia/Swap] Using router: ${routerAddress}`);
     const fee = getBaseSepoliaSwapFee();
     const wallet = await getBaseSepoliaSigner(ctx);
+    const walletAddress = await wallet.getAddress();
 
     // NOTE: Circle USDC on Base Sepolia is 0x036CbD..., Aave/Comet mock USDC is 0xba50Cd...
     const circleUsdcAddress = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
@@ -500,7 +504,7 @@ async function swapCircleToMockUsdcOnBase(
     ];
 
     const token = new ethers.Contract(circleUsdcAddress, ERC20_ABI, wallet);
-    const allowance = await token.allowance(wallet.address, routerAddress);
+    const allowance = await token.allowance(walletAddress, routerAddress);
     if (allowance < amountIn) {
       const approveTx = await token.approve(routerAddress, amountIn);
       await approveTx.wait();
@@ -511,7 +515,7 @@ async function swapCircleToMockUsdcOnBase(
       tokenIn: circleUsdcAddress,
       tokenOut: mockUsdcAddress,
       fee,
-      recipient: wallet.address,
+      recipient: walletAddress,
       amountIn,
       amountOutMinimum: 0n,
       sqrtPriceLimitX96: 0n,
@@ -643,9 +647,10 @@ async function getUnifiedBalance(ctx: PluginContext, chainConfig: ChainConfig): 
   try {
     const provider = new ethers.JsonRpcProvider(chainConfig.rpcUrl);
     const wallet = new ethers.Wallet(ctx.privateKey, provider);
+    const walletAddress = await wallet.getAddress();
     const minter = new ethers.Contract(chainConfig.gatewayMinter, GATEWAY_MINTER_ABI, wallet);
 
-    const balance = await minter.unifiedBalance(wallet.address);
+    const balance = await minter.unifiedBalance(walletAddress);
     return balance;
   } catch (error) {
     console.log(`[Gateway] Could not fetch unified balance on ${chainConfig.name}:`, error);
@@ -695,10 +700,11 @@ async function depositToGateway(
   try {
     const provider = new ethers.JsonRpcProvider(sourceChain.rpcUrl);
     const wallet = new ethers.Wallet(ctx.privateKey, provider);
+    const walletAddress = await wallet.getAddress();
 
     // Check USDC balance
     const usdc = new ethers.Contract(sourceChain.usdcAddress, ERC20_ABI, wallet);
-    const balance = await usdc.balanceOf(wallet.address);
+    const balance = await usdc.balanceOf(walletAddress);
 
     if (balance < amount) {
       console.log(`[Gateway] Insufficient USDC on ${sourceChain.name}: ${ethers.formatUnits(balance, 6)} < ${ethers.formatUnits(amount, 6)}`);
@@ -708,7 +714,7 @@ async function depositToGateway(
     // Approve Gateway to spend USDC
     const gatewayWallet = new ethers.Contract(sourceChain.gatewayWallet, GATEWAY_WALLET_ABI, wallet);
 
-    const allowance = await usdc.allowance(wallet.address, sourceChain.gatewayWallet);
+    const allowance = await usdc.allowance(walletAddress, sourceChain.gatewayWallet);
     if (allowance < amount) {
       console.log(`[Gateway] Approving USDC for Gateway on ${sourceChain.name}...`);
       const approveTx = await usdc.approve(sourceChain.gatewayWallet, ethers.MaxUint256);

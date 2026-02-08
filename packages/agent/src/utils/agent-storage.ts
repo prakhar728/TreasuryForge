@@ -51,7 +51,7 @@ export interface GatewayPositionRecord {
 }
 
 export class AgentStorage {
-  private db: Database.Database;
+  private db: any;
   private masterKey: Buffer | null;
 
   constructor(params?: { dbPath?: string; masterKey?: string }) {

@@ -11,6 +11,7 @@ import {
   SuiSignTransaction,
   SuiSignTransactionBlock,
   type Wallet,
+  type IdentifierArray,
 } from "@mysten/wallet-standard";
 
 const SUI_TESTNET_CHAIN: `${string}:${string}` = "sui:testnet";
@@ -89,8 +90,8 @@ class LocalSuiWallet implements Wallet {
     ];
   }
 
-  get chains(): string[] {
-    return [this.chain];
+  get chains(): IdentifierArray {
+    return [this.chain] as IdentifierArray;
   }
 
   get features(): Record<string, any> {

@@ -47,8 +47,8 @@ const BASE_MAINNET_USDC_ADDRESS =
 const { EvmCCTPExecutor } = require("@wormhole-labs/cctp-executor-route/dist/cjs/evm/index.js") as {
   EvmCCTPExecutor: typeof import("@wormhole-labs/cctp-executor-route/dist/cjs/evm/executor.js").EvmCCTPExecutor;
 };
-if (!protocolIsRegistered(evmPlatformCore, "CCTPExecutor")) {
-  registerProtocol(evmPlatformCore, "CCTPExecutor", EvmCCTPExecutor);
+if (!protocolIsRegistered(evmPlatformCore, "CCTPExecutor" as any)) {
+  registerProtocol(evmPlatformCore, "CCTPExecutor" as any, EvmCCTPExecutor as any);
 }
 
 async function ensureUserSuiKey(
@@ -183,7 +183,7 @@ async function ensureBalanceManagerId(
     transaction: tx,
     signer: suiKeypair,
     options: { showEffects: true },
-  });
+  } as any);
 
   const after = await deepbookClient.deepbook.getBalanceManagerIds(address);
   if (after.length === 0) {
@@ -474,9 +474,9 @@ async function bridgeBaseToSui(
   apy?: number
 ): Promise<{ success: boolean; mocked: boolean; bridgeTxHash?: string }> {
   try {
-  const wh = new Wormhole(WORMHOLE_NETWORK, [evmPlatform.Platform, suiPlatform.Platform]);
-    const src = wh.getChain(WORMHOLE_BASE_CHAIN);
-    const dst = wh.getChain("Sui");
+    const wh = new Wormhole(WORMHOLE_NETWORK, [evmPlatform.Platform, suiPlatform.Platform]) as any;
+    const src = wh.getChain(WORMHOLE_BASE_CHAIN as any);
+    const dst = wh.getChain("Sui" as any);
 
     const srcSigner = await getBaseSigner(src, ctx);
 
@@ -490,17 +490,17 @@ async function bridgeBaseToSui(
     const recipient = Wormhole.chainAddress(dst.chain, suiAddress);
     const amountUsdc = Number(ethers.formatUnits(amount, 6));
 
-    const tr = await routes.RouteTransferRequest.create(wh, {
+    const tr = (await routes.RouteTransferRequest.create(wh as any, {
       source: Wormhole.tokenId(src.chain, srcUsdc),
       destination: Wormhole.tokenId(dst.chain, dstUsdc),
       sourceDecimals: 6,
       destinationDecimals: 6,
       sender,
       recipient,
-    });
+    })) as any;
 
-    const RouteImpl = cctpExecutorRoute();
-    const route = new RouteImpl(wh);
+    const RouteImpl = cctpExecutorRoute() as any;
+    const route = new RouteImpl(wh) as any;
     const validation = await route.validate(tr, { amount: amountUsdc });
     if (!validation.valid) {
       throw validation.error;
@@ -517,7 +517,8 @@ async function bridgeBaseToSui(
     console.log(`[Sui] Submitting Wormhole CCTP transfer...`);
 
     const receipt = await route.initiate(tr, srcSigner, quote, recipient);
-    const lastTx = receipt.originTxs?.[receipt.originTxs.length - 1];
+    const originTxs = (receipt as any)?.originTxs as any[] | undefined;
+    const lastTx = originTxs?.[originTxs.length - 1];
     const txHash =
       typeof lastTx === "string" ? lastTx : lastTx?.txid ? String(lastTx.txid) : undefined;
 
@@ -690,9 +691,10 @@ async function depositToDeepBook(
       transaction: tx,
       signer: suiKeypair,
       options: { showEffects: true },
-    });
+    } as any);
 
-    console.log(`[Sui] DeepBook deposit tx: ${res.digest}`);
+    const digest = (res as any)?.digest ?? (res as any)?.effects?.transactionDigest;
+    console.log(`[Sui] DeepBook deposit tx: ${digest ?? "unknown"}`);
     return { success: true, mocked: false, poolShares: amount };
   } catch (error) {
     console.log("[Sui] DeepBook deposit failed:", error);
