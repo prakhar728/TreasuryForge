@@ -369,12 +369,12 @@ export const DepositUI: React.FC<DepositUIProps> = ({
         <p className="text-white/60 mb-6">Connect your wallet to deposit USDC and set yield policies.</p>
         <button
           onClick={connectWallet}
-          className="px-6 py-3 rounded-xl bg-emerald-400/90 text-black font-semibold hover:bg-emerald-300 transition"
+          className="px-6 py-3 rounded-xl bg-[#A8C7FF] text-black font-semibold hover:bg-[#C7DAFF] transition"
         >
           Connect Wallet
         </button>
         {message && (
-          <p className="mt-4 text-sm text-rose-300">{message}</p>
+          <p className="mt-4 text-sm text-[#FF8F8F]">{message}</p>
         )}
       </div>
     );
@@ -388,7 +388,7 @@ export const DepositUI: React.FC<DepositUIProps> = ({
         <div className="flex justify-between items-center mb-3">
           <span className="text-sm text-white/50">Connected</span>
           <div className="flex items-center gap-2">
-            <span className="text-xs font-mono bg-emerald-500/20 text-emerald-200 px-2 py-1 rounded">
+            <span className="text-xs font-mono bg-[#A8C7FF]/20 text-[#A8C7FF] px-2 py-1 rounded">
               {userAddress.slice(0, 6)}...{userAddress.slice(-4)}
             </span>
             <button
@@ -399,7 +399,7 @@ export const DepositUI: React.FC<DepositUIProps> = ({
             </button>
             <button
               onClick={switchAccount}
-              className="text-xs px-2 py-1 rounded bg-sky-400/10 text-sky-200 hover:bg-sky-400/20 transition"
+              className="text-xs px-2 py-1 rounded bg-[#7BAFFF]/10 text-[#7BAFFF] hover:bg-[#7BAFFF]/20 transition"
             >
               Switch Account
             </button>
@@ -456,7 +456,7 @@ export const DepositUI: React.FC<DepositUIProps> = ({
           value={depositAmount}
           onChange={(e) => setDepositAmount(e.target.value)}
           placeholder="Amount (USDC)"
-          className="w-full px-3 py-2 mb-3 rounded-lg border border-white/10 bg-white/5 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-emerald-300/60"
+          className="w-full px-3 py-2 mb-3 rounded-lg border border-white/10 bg-white/5 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#A8C7FF]/60"
         />
 
         <div className="grid grid-cols-2 gap-3 mb-3">
@@ -467,7 +467,7 @@ export const DepositUI: React.FC<DepositUIProps> = ({
               value={yieldThreshold}
               onChange={(e) => setYieldThreshold(e.target.value)}
               step="0.1"
-              className="w-full px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-emerald-300/60"
+              className="w-full px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#A8C7FF]/60"
             />
           </div>
           <div>
@@ -476,7 +476,7 @@ export const DepositUI: React.FC<DepositUIProps> = ({
               type="number"
               value={maxBorrow}
               onChange={(e) => setMaxBorrow(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-emerald-300/60"
+              className="w-full px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#A8C7FF]/60"
             />
           </div>
         </div>
@@ -484,7 +484,7 @@ export const DepositUI: React.FC<DepositUIProps> = ({
         <select
           value={strategy}
           onChange={(e) => setStrategy(e.target.value)}
-          className="w-full px-3 py-2 mb-3 rounded-lg border border-white/10 bg-white/5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-300/60"
+          className="w-full px-3 py-2 mb-3 rounded-lg border border-white/10 bg-white/5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-[#A8C7FF]/60"
         >
           <option value="DeFi_Yield">DeFi Yield</option>
           <option value="RWA_Loan">RWA Loan</option>
@@ -495,14 +495,14 @@ export const DepositUI: React.FC<DepositUIProps> = ({
           <button
             onClick={approveUSDC}
             disabled={status === "loading" || !depositAmount}
-            className="flex-1 px-3 py-2 rounded-lg bg-amber-400/80 text-black font-semibold hover:bg-amber-300 disabled:bg-white/10 transition text-sm"
+            className="flex-1 px-3 py-2 rounded-lg bg-[#F6C453] text-black font-semibold hover:bg-[#FFD580] disabled:bg-white/10 transition text-sm"
           >
             Approve
           </button>
           <button
             onClick={handleDeposit}
             disabled={status === "loading" || !depositAmount}
-            className="flex-1 px-3 py-2 rounded-lg bg-emerald-400/90 text-black font-semibold hover:bg-emerald-300 disabled:bg-white/10 transition text-sm"
+            className="flex-1 px-3 py-2 rounded-lg bg-[#A8C7FF] text-black font-semibold hover:bg-[#C7DAFF] disabled:bg-white/10 transition text-sm"
           >
             Deposit & Set Policy
           </button>
@@ -519,18 +519,18 @@ export const DepositUI: React.FC<DepositUIProps> = ({
               value={withdrawAmount}
               onChange={(e) => setWithdrawAmount(e.target.value)}
               placeholder="Amount"
-              className="flex-1 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-rose-300/60"
+              className="flex-1 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#FF8F8F]/60"
             />
             <button
               onClick={handleWithdraw}
               disabled={status === "loading" || !withdrawAmount}
-              className="px-4 py-2 rounded-lg bg-rose-400/90 text-black font-semibold hover:bg-rose-300 disabled:bg-white/10 transition text-sm"
+              className="px-4 py-2 rounded-lg bg-[#FF6B6B] text-black font-semibold hover:bg-[#FF8F8F] disabled:bg-white/10 transition text-sm"
             >
               Request
             </button>
           </div>
           {parseFloat(borrowedAmount) > 0 && (
-            <p className="mt-2 text-xs text-amber-300">Repay borrow before withdrawing</p>
+            <p className="mt-2 text-xs text-[#F6C453]">Repay borrow before withdrawing</p>
           )}
           {withdrawPending && (
             <div className="mt-3 text-xs text-white/60">
@@ -554,16 +554,16 @@ export const DepositUI: React.FC<DepositUIProps> = ({
       {/* Status */}
       {message && (
         <div className={`p-3 rounded-lg text-sm ${
-          status === "success" ? "bg-emerald-400/10 text-emerald-200"
-            : status === "error" ? "bg-rose-400/10 text-rose-200"
-            : "bg-sky-400/10 text-sky-200"
+          status === "success" ? "bg-[#A8C7FF]/10 text-[#A8C7FF]"
+            : status === "error" ? "bg-[#FF6B6B]/10 text-[#FF8F8F]"
+            : "bg-[#7BAFFF]/10 text-[#7BAFFF]"
         }`}>
           {message}
         </div>
       )}
 
       {agentManagedSui && (
-        <div className="p-3 rounded-lg text-xs bg-indigo-400/10 text-indigo-200">
+        <div className="p-3 rounded-lg text-xs bg-[#7BAFFF]/12 text-[#B9D1FF]">
           Agent-managed Sui wallet created for this account.
         </div>
       )}

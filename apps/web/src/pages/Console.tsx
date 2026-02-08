@@ -12,17 +12,17 @@ function Console() {
   type Position = { name: string; status: string; detail: string; tone: 'emerald' | 'amber' | 'rose' | 'sky' };
 
   const toneBarClass: Record<Signal['tone'], string> = {
-    emerald: 'bg-emerald-400/80',
-    amber: 'bg-amber-400/80',
-    rose: 'bg-rose-400/80',
-    sky: 'bg-sky-400/80',
+    emerald: 'bg-[#A8C7FF]',
+    amber: 'bg-[#F6C453]',
+    rose: 'bg-[#FF6B6B]',
+    sky: 'bg-[#7BAFFF]',
   };
 
   const toneTextClass: Record<Position['tone'], string> = {
-    emerald: 'text-emerald-300',
-    amber: 'text-amber-300',
-    sky: 'text-sky-300',
-    rose: 'text-rose-300',
+    emerald: 'text-[#A8C7FF]',
+    amber: 'text-[#F6C453]',
+    sky: 'text-[#7BAFFF]',
+    rose: 'text-[#FF8F8F]',
   };
 
   const [liveFeed, setLiveFeed] = useState<FeedItem[]>([]);
@@ -166,7 +166,7 @@ function Console() {
         return (
           <a
             key={`link-${index}`}
-            className="text-emerald-300 underline break-all hover:text-emerald-200"
+            className="text-[#A8C7FF] underline break-all hover:text-[#A8C7FF]"
             href={part}
             target="_blank"
             rel="noreferrer"
@@ -180,19 +180,20 @@ function Console() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0b10] text-white">
+    <div className="min-h-screen bg-[#071426] text-[#F5F8FF]">
       <div className="relative overflow-hidden">
         <div className="absolute inset-0">
-          <div className="absolute -top-40 left-1/2 h-[520px] w-[520px] -translate-x-1/2 rounded-full bg-[#1b2341] blur-3xl opacity-70" />
-          <div className="absolute top-40 right-0 h-[520px] w-[520px] rounded-full bg-[#124036] blur-3xl opacity-55" />
-          <div className="absolute bottom-0 left-0 h-[520px] w-[520px] rounded-full bg-[#3b1930] blur-3xl opacity-40" />
-          <div className="absolute right-1/3 top-10 h-[320px] w-[320px] rounded-full bg-[#1c2f52] blur-3xl opacity-40" />
+          <div className="absolute inset-0 bg-[radial-gradient(120%_100%_at_50%_-20%,#2a4c7b_0%,#112846_50%,#071426_100%)]" />
+          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(7,20,38,0)_0%,rgba(7,20,38,0.6)_65%,#071426_100%)]" />
+          <div className="absolute -right-64 top-10 h-[720px] w-[720px] rounded-full border border-white/10 opacity-70" />
+          <div className="absolute -right-40 top-32 h-[520px] w-[520px] rounded-full border border-white/10 opacity-60" />
+          <div className="absolute -left-40 bottom-[-300px] h-[520px] w-[720px] rounded-[100%] bg-[radial-gradient(60%_60%_at_50%_50%,rgba(196,214,255,0.35)_0%,rgba(7,20,38,0)_70%)] opacity-70" />
         </div>
 
         <div className="relative max-w-7xl mx-auto px-6 py-10">
           <header className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-400/20 text-emerald-200">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#A8C7FF]/20 text-[#A8C7FF]">
                 TF
               </div>
               <div>
@@ -261,7 +262,7 @@ function Console() {
                   <button
                     className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
                       showOnlyRelevant
-                        ? 'border-emerald-400/60 bg-emerald-400/10 text-emerald-200'
+                        ? 'border-[#A8C7FF]/60 bg-[#A8C7FF]/10 text-[#A8C7FF]'
                         : 'border-white/10 bg-white/5 text-white/70 hover:text-white'
                     }`}
                     onClick={() => setShowOnlyRelevant((prev) => !prev)}

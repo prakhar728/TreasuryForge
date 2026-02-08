@@ -43,6 +43,7 @@ let loggedSuiNetwork = false;
 const BASE_MAINNET_RPC_URL = process.env.BASE_MAINNET_RPC_URL || "https://mainnet.base.org";
 const BASE_MAINNET_USDC_ADDRESS =
   process.env.BASE_MAINNET_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const BASE_MAINNET_TO_SUI_MAX_USDC = 100_000n; // 0.1 USDC (6 decimals)
 
 const { EvmCCTPExecutor } = require("@wormhole-labs/cctp-executor-route/dist/cjs/evm/index.js") as {
   EvmCCTPExecutor: typeof import("@wormhole-labs/cctp-executor-route/dist/cjs/evm/executor.js").EvmCCTPExecutor;
@@ -465,6 +466,18 @@ async function getBaseUsdcBalance(ctx: PluginContext): Promise<bigint> {
   return usdc.balanceOf(wallet.address);
 }
 
+function isBaseMainnetToSui(): boolean {
+  return WORMHOLE_NETWORK === "Mainnet" && WORMHOLE_BASE_CHAIN.toLowerCase() === "base";
+}
+
+function clampBaseMainnetToSui(amount: bigint): { amount: bigint; capped: boolean } {
+  if (!isBaseMainnetToSui()) return { amount, capped: false };
+  if (amount > BASE_MAINNET_TO_SUI_MAX_USDC) {
+    return { amount: BASE_MAINNET_TO_SUI_MAX_USDC, capped: true };
+  }
+  return { amount, capped: false };
+}
+
 async function bridgeBaseToSui(
   ctx: PluginContext,
   amount: bigint,
@@ -472,8 +485,16 @@ async function bridgeBaseToSui(
   suiAddress: string,
   poolKey: string,
   apy?: number
-): Promise<{ success: boolean; mocked: boolean; bridgeTxHash?: string }> {
+): Promise<{ success: boolean; mocked: boolean; bridgeTxHash?: string; amountBridged?: bigint }> {
   try {
+    const capped = clampBaseMainnetToSui(amount);
+    if (capped.capped) {
+      console.log(
+        `[Sui] Capping Base→Sui bridge to 0.1 USDC on Base mainnet ` +
+        `(requested ${ethers.formatUnits(amount, 6)} USDC)`
+      );
+    }
+    amount = capped.amount;
     const wh = new Wormhole(WORMHOLE_NETWORK, [evmPlatform.Platform, suiPlatform.Platform]) as any;
     const src = wh.getChain(WORMHOLE_BASE_CHAIN as any);
     const dst = wh.getChain("Sui" as any);
@@ -537,10 +558,10 @@ async function bridgeBaseToSui(
       const whNetwork = WORMHOLE_NETWORK.toLowerCase() === "testnet" ? "Testnet" : "Mainnet";
       console.log(`[Sui][Explorer] WormholeScan: https://wormholescan.io/#/tx/${txHash}?network=${whNetwork}`);
     }
-    return { success: true, mocked: false, bridgeTxHash: txHash };
+    return { success: true, mocked: false, bridgeTxHash: txHash, amountBridged: amount };
   } catch (error) {
     console.error("[Sui] Wormhole bridge failed:", error);
-    return { success: false, mocked: true };
+    return { success: false, mocked: true, amountBridged: amount };
   }
 }
 
@@ -948,8 +969,16 @@ export const suiYieldPlugin: Plugin = {
             continue;
           }
 
+          const desiredRaw = BigInt(gatewayPos.amount || "0");
+          const desiredCapped = clampBaseMainnetToSui(desiredRaw);
+          if (desiredCapped.capped) {
+            console.log(
+              `[Sui] Capping Base→Sui bridge to 0.1 USDC on Base mainnet ` +
+              `(requested ${ethers.formatUnits(desiredRaw, 6)} USDC)`
+            );
+          }
+          const desired = desiredCapped.amount;
           const baseBalance = await getBaseUsdcBalance(ctx);
-          const desired = BigInt(gatewayPos.amount || "0");
           if (baseBalance < desired || desired === 0n) {
             console.log(
               `[Sui] Base USDC balance too low for Wormhole bridge: ` +
@@ -968,10 +997,11 @@ export const suiYieldPlugin: Plugin = {
             bestPool.apy
           );
           if (bridgeResult.success) {
+            const bridgedAmount = bridgeResult.amountBridged ?? desired;
             actions.push({
               type: "bridge",
               chain: "base",
-              amount: desired,
+              amount: bridgedAmount,
               details: {
                 user,
                 direction: "outbound",
@@ -1000,7 +1030,15 @@ export const suiYieldPlugin: Plugin = {
         // Calculate borrow amount (20% of deposit for Sui - most conservative)
         const maxBorrow = policy.maxBorrowAmount;
         const fifthDeposit = amount / 5n;
-        const borrowAmount = maxBorrow < fifthDeposit ? maxBorrow : fifthDeposit;
+        const borrowAmountRaw = maxBorrow < fifthDeposit ? maxBorrow : fifthDeposit;
+        const borrowCapped = clampBaseMainnetToSui(borrowAmountRaw);
+        if (borrowCapped.capped) {
+          console.log(
+            `[Sui] Capping Base→Sui bridge to 0.1 USDC on Base mainnet ` +
+            `(requested ${ethers.formatUnits(borrowAmountRaw, 6)} USDC)`
+          );
+        }
+        const borrowAmount = borrowCapped.amount;
 
         if (borrowAmount === 0n) continue;
 
@@ -1048,10 +1086,11 @@ export const suiYieldPlugin: Plugin = {
         );
 
         if (bridgeResult.success) {
+          const bridgedAmount = bridgeResult.amountBridged ?? borrowAmount;
           actions.push({
             type: "bridge",
             chain: "base",
-            amount: borrowAmount,
+            amount: bridgedAmount,
             details: {
               user,
               direction: "outbound",
