@@ -9,6 +9,8 @@ TreasuryForge lets teams deposit USDC on Arc, set yield policies, and let an age
 > **MAINNET FLOW (IN VIDEO):** DeepBook liquidity is not available on Sui testnet, so the demo video shows a mainnet flow with Base → Sui bridging and DeepBook deposits.  
 > Once Arc mainnet launches, we can route USDC end‑to‑end using Circle (Arc → Base via unified Gateway, then Base → Sui via CCTP), keeping the entire bridge path on Circle infrastructure.
 
+> **NOTE:** We’re using free‑tier infrastructure for the demo, so rate limits or temporary failures can happen unexpectedly.
+
 Built for **ETHGlobal HackMoney 2026** with a focus on:
 - Arc prize tracks: chain‑abstracted USDC liquidity, RWA agentic commerce, and treasury systems.
 - Sui prize track: DeepBook‑powered DeFi with real order‑book signals.
