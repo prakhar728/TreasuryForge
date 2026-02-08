@@ -1,5 +1,5 @@
 const EXPLORER_TX_BASES: Record<string, string> = {
-  arc: "https://explorer.testnet.arc.network/tx/",
+  arc: "https://testnet.arcscan.app/tx/",
   ethereum: "https://sepolia.etherscan.io/tx/",
   base: "https://sepolia.basescan.org/tx/",
   avalanche: "https://testnet.snowtrace.io/tx/",

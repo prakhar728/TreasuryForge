@@ -39,6 +39,17 @@ export interface AavePositionRecord {
   updatedAt: number;
 }
 
+export interface GatewayPositionRecord {
+  user: string;
+  destinationChain: string;
+  amount: string;
+  depositTime: number;
+  txHash?: string | null;
+  status: "active" | "blocked";
+  lastAttempt: number;
+  lastError?: string | null;
+}
+
 export class AgentStorage {
   private db: Database.Database;
   private masterKey: Buffer | null;
@@ -93,6 +104,17 @@ export class AgentStorage {
         status TEXT NOT NULL,
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (user, chain, protocol)
+      );
+
+      CREATE TABLE IF NOT EXISTS gateway_positions (
+        user TEXT PRIMARY KEY,
+        destination_chain TEXT NOT NULL,
+        amount TEXT NOT NULL,
+        deposit_time INTEGER NOT NULL,
+        tx_hash TEXT,
+        status TEXT NOT NULL,
+        last_attempt INTEGER NOT NULL,
+        last_error TEXT
       );
     `);
   }
@@ -162,6 +184,14 @@ export class AgentStorage {
       .get(user) as { suiAddress: string } | undefined;
 
     return row?.suiAddress || null;
+  }
+
+  listSuiKeys(): Array<{ user: string; suiAddress: string }> {
+    const rows = this.db.prepare("SELECT user, sui_address as suiAddress FROM sui_keys").all() as Array<{
+      user: string;
+      suiAddress: string;
+    }>;
+    return rows;
   }
 
   upsertPosition(record: SuiPositionRecord): void {
@@ -262,6 +292,80 @@ export class AgentStorage {
         record.status,
         record.updatedAt
       );
+  }
+
+  upsertGatewayPosition(record: GatewayPositionRecord): void {
+    const existing = this.db.prepare("SELECT user FROM gateway_positions WHERE user = ?").get(record.user);
+    if (existing) {
+      this.db
+        .prepare(
+          `UPDATE gateway_positions
+           SET destination_chain = ?, amount = ?, deposit_time = ?, tx_hash = ?, status = ?, last_attempt = ?, last_error = ?
+           WHERE user = ?`
+        )
+        .run(
+          record.destinationChain,
+          record.amount,
+          record.depositTime,
+          record.txHash || null,
+          record.status,
+          record.lastAttempt,
+          record.lastError || null,
+          record.user
+        );
+      return;
+    }
+
+    this.db
+      .prepare(
+        `INSERT INTO gateway_positions
+         (user, destination_chain, amount, deposit_time, tx_hash, status, last_attempt, last_error)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        record.user,
+        record.destinationChain,
+        record.amount,
+        record.depositTime,
+        record.txHash || null,
+        record.status,
+        record.lastAttempt,
+        record.lastError || null
+      );
+  }
+
+  getGatewayPosition(user: string): GatewayPositionRecord | null {
+    const row = this.db.prepare("SELECT * FROM gateway_positions WHERE user = ?").get(user);
+    if (!row) return null;
+    const record = row as any;
+    return {
+      user: record.user,
+      destinationChain: record.destination_chain,
+      amount: record.amount,
+      depositTime: record.deposit_time,
+      txHash: record.tx_hash,
+      status: record.status,
+      lastAttempt: record.last_attempt,
+      lastError: record.last_error,
+    };
+  }
+
+  listGatewayPositions(): GatewayPositionRecord[] {
+    const rows = this.db.prepare("SELECT * FROM gateway_positions").all() as any[];
+    return rows.map((record) => ({
+      user: record.user,
+      destinationChain: record.destination_chain,
+      amount: record.amount,
+      depositTime: record.deposit_time,
+      txHash: record.tx_hash,
+      status: record.status,
+      lastAttempt: record.last_attempt,
+      lastError: record.last_error,
+    }));
+  }
+
+  deleteGatewayPosition(user: string): void {
+    this.db.prepare("DELETE FROM gateway_positions WHERE user = ?").run(user);
   }
 
   listAavePositions(): AavePositionRecord[] {

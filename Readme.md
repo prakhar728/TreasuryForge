@@ -1,184 +1,167 @@
 # TreasuryForge
 
-**Autonomous RWA-backed treasury optimizer on Circle's Arc chain**
+**Our one-liner: Autonomous USDC treasury optimizer spanning Arc + Sui, with an explainable agent and live ops console.**
 
-TreasuryForge lets users deposit USDC, set yield policies, and let an AI agent autonomously manage their funds. The agent monitors yields via Stork oracle, deploys to RWA strategies (USYC - tokenized US Treasury fund), and automatically returns principal + profits.
+TreasuryForge lets teams deposit USDC on Arc, set yield policies, and let an agent route capital into RWA yield (USYC), cross-chain stablecoin carry via Circle Gateway, and DeepBook liquidity on Sui. Every action is streamed to a live UI so users can see exactly why the agent moved funds. We tried to make it a glass box, instead of a black box.
 
-## Bounty Targets
+Built for **ETHGlobal HackMoney 2026** with a focus on:
+- Arc prize tracks: chain‑abstracted USDC liquidity, RWA agentic commerce, and treasury systems.
+- Sui prize track: DeepBook‑powered DeFi with real order‑book signals.
 
-| Bounty | Prize | Status |
-|--------|-------|--------|
-| **#3: Agentic Commerce with RWA** | $2,500 | Done |
-| **#1: Chain Abstracted USDC Apps** | $5,000 | Done |
+## Why This Exists
+Real treasuries have three problems:
+- **Risk‑off markets push teams into stables**, but it’s unclear where to deploy safely for yield.
+- **Fragmented liquidity** across chains and venues makes best‑rate routing hard.
+- **Opaque automation** turns yield ops into a black box.
 
-## How It Works
+I built this in a risk‑off market while sitting on stablecoins I didn’t want to leave idle. Yields move fast, the “best” option changes weekly, and I don’t have time to manage it all. I wanted a system that could watch the market for me, route my stables to the best yield, and show me exactly why it made each move.
 
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│                                                                            │
-│   User                    Vault                    Agent                   │
-│    │                        │                        │                     │
-│    │── deposit(USDC) ──────▶│                        │                     │
-│    │── setPolicy(RWA) ─────▶│                        │                     │
-│    │                        │                        │                     │
-│    │                        │◀── monitor events ─────│                     │
-│    │                        │                        │                     │
-│    │                        │── borrowRWA() ────────▶│                     │
-│    │                        │                        │── deposit to USYC   │
-│    │                        │                        │                     │
-│    │                        │                        │   (yield accrues)   │
-│    │                        │                        │                     │
-│    │                        │                        │── redeem USYC       │
-│    │                        │◀── repayRWA(+yield) ───│                     │
-│    │                        │                        │                     │
-│    │◀── withdraw(+profit) ──│                        │                     │
-│                                                                            │
-└────────────────────────────────────────────────────────────────────────────┘
-```
+TreasuryForge uses Arc testnet and Circle’s unified USDC balance to simplify cross‑chain liquidity. Instead of rebuilding that complexity ourselves, we focus on a vault + agent that does the routing and yield ops for the user—with full transparency.
+
+## What’s Built
+- **Arc Treasury Vault (Solidity)**
+  - User deposits, policies, and controlled borrows.
+  - Agent‑only RWA borrow/repay and withdrawal processing.
+- **Autonomous Agent (TypeScript)**
+  - Plugin‑based yield engine.
+  - Live agent API for UI signals, positions, and logs.
+- **Sui Treasury Module (Move)**
+  - DeepBook pool deposits, maker orders, and PTB‑composable rebalancing.
+- **Ops Console (React)**
+  - Deposit + policy UI, live signals, positions, and agent feed.
+
+## Architecture (One‑Page)
+See the full diagram in `docs/architecture.md`.
+
+High‑level flow:
+1. User deposits USDC on Arc and sets a policy.
+2. Agent scans yields and chooses the best strategy.
+3. Agent borrows from vault and allocates:
+   - USYC (RWA) on Arc.
+   - Cross‑chain USDC via Circle Gateway.
+   - Sui DeepBook liquidity via Wormhole CCTP.
+4. Profits return to Arc and are repaid to the vault.
+5. UI shows every step in real time.
+
+## Demo Flow (5–7 min)
+1. **Open UI** (`apps/web`) and connect MetaMask to Arc Testnet.
+2. **Deposit USDC** and set policy to `RWA_Loan` or `DeFi_Yield`.
+3. **Start agent** (`packages/agent`) and show:
+   - Best yield signals.
+   - Borrow + deposit actions.
+   - Repay events after the demo hold time.
+4. **(Optional) Sui**: run the Base → Sui bridge script and show DeepBook deposit log.
+5. **(Optional) Cross‑chain**: enable Circle Gateway route to Base Sepolia demo.
+
+## Hackathon Alignment
+### Arc Prize Tracks
+- **Best Chain‑Abstracted USDC Apps**
+  - Circle Gateway integration to move USDC across Arc, Base Sepolia, Ethereum Sepolia, Avalanche Fuji.
+  - Unified agent logic treats multiple chains as one liquidity surface.
+- **Build Global Payouts and Treasury Systems**
+  - Vault + policy system for treasury management and controlled withdrawals.
+- **Best Agentic Commerce App Powered by RWAs**
+  - USYC integration with Stork‑informed yield policy and autonomous repay.
+
+### Sui Prize Track
+- DeepBook pool operations and order‑book‑derived yield signals.
+- Sui treasury module designed for PTB‑composable rebalancing.
 
 ## Quick Start
-
 ```bash
-# 1. Clone and setup
-git clone <repo>
-cd TreasuryForge
+# 1. Setup
 cp .env.example .env
 
-# 2. Deploy vault to Arc testnet
+# 2. Deploy Arc vault (Foundry)
 cd contracts/arc
 forge script script/DeployTreasuryVault.s.sol:DeployTreasuryVault --rpc-url arc --broadcast
 
-# 2b. Deploy vault to Base Sepolia (Circle USDC parking)
-forge script script/DeployTreasuryVaultBase.s.sol:DeployTreasuryVaultBase --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --dotenv-path ../../.env
-
 # 3. Start agent
-cd packages/agent
-npm install && npm run dev
+cd ../../packages/agent
+npm install
+npm run dev
 
 # 4. Start frontend
-cd apps/web
-npm install && npm run dev
+cd ../../apps/web
+npm install
+npm run dev
+```
 
-# (Optional) Wormhole CCTP Base -> Sui + DeepBook deposit (mainnet)
+### Optional: Base Sepolia Vault (for Circle Gateway demo)
+```bash
+cd contracts/arc
+forge script script/DeployTreasuryVaultBase.s.sol:DeployTreasuryVaultBase --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --dotenv-path ../../.env
+```
+
+### Optional: Bridge USDC Base → Sui + DeepBook (Mainnet)
+```bash
 cd packages/agent
 npm run bridge:base-sui-deepbook
 
-# Resume mode: skip bridge, just deposit on Sui once funds arrive
-cd packages/agent
+# Resume if transfer already initiated
 npm run bridge:base-sui-deepbook -- --resume
-
-# (Optional) Router Nitro Base -> Sui + DeepBook deposit (mainnet)
-cd packages/agent
-npm run bridge:nitro-base-sui-deepbook
 ```
 
-## Project Structure
+### Optional: Stargate Base → Sui + DeepBook (Mainnet)
+```bash
+cd packages/agent
+npm run bridge:stargate-base-sui-deepbook
+```
 
+## Repo Map
 ```
 TreasuryForge/
-├── contracts/
-│   └── arc/                    # Solidity contracts (Foundry)
-│       └── src/TreasuryVault.sol
-├── packages/
-│   └── agent/                  # Autonomous agent (TypeScript)
-│       └── src/
-│           ├── index.ts        # Agent core loop
-│           ├── plugins/        # Yield strategy plugins
-│           │   └── arc-rebalance.ts  # USYC RWA integration
-│           └── abi/            # Contract ABIs
-├── apps/
-│   └── web/                    # React frontend
-│       └── src/
-│           └── components/DepositUI.tsx
-└── docs/
-    └── architecture.md         # Full system documentation
+├── apps/web                # React ops console
+├── contracts/arc           # Arc Solidity vault (Foundry)
+├── contracts/sui           # Sui treasury + DeepBook Move module
+├── packages/agent          # Autonomous agent + plugins
+├── docs/architecture.md    # System diagram
+└── scripts                 # Demo helpers and guides
 ```
 
-## Deployed Contracts (Arc Testnet)
+## Agent Plugins
+- `arc-rebalance`
+  - Uses Stork oracle to decide when to borrow for USYC yield.
+  - Simulates USYC if agent isn’t allowlisted.
+- `gateway-yield`
+  - Queries yields (DefiLlama + Aave fallback) and routes USDC via Circle Gateway.
+  - Demo mode on Base Sepolia with adjustable APY.
+- `sui-yield`
+  - Computes DeepBook spread‑based yield signals.
+  - Bridges USDC to Sui and deposits into DeepBook pools.
+
+## Deployed (Arc Testnet)
+Replace if you redeploy.
 
 | Contract | Address |
 |----------|---------|
-| TreasuryVault | `0xfc052abb90f5bd0b0c161105a9e2f9bf933fdffa` |
+| TreasuryVault | `0x7d5561636c5c78e85997cfb53da79b74b9a16f93` |
 | USDC | `0x3600000000000000000000000000000000000000` |
 | USYC Token | `0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C` |
 | USYC Teller | `0x9fdF14c5B14173D74C08Af27AebFf39240dC105A` |
 
-## Agent Plugin Architecture
+## Environment
+See `.env.example` for the full list. Minimum to demo:
+- `ARC_RPC_URL`
+- `ARC_VAULT_ADDRESS`
+- `ARC_USDC_ADDRESS`
+- `PRIVATE_KEY`
 
-```typescript
-interface Plugin {
-  name: string;
-  monitor(ctx): Promise<YieldOpportunity[]>;   // Check yields
-  evaluate(opps, ctx): Promise<boolean>;       // Decide to act
-  execute(ctx): Promise<RebalanceAction[]>;    // Execute trades
-}
-```
-
-### Current Plugins
-
-**arc-rebalance** (Bounty 3: RWA)
-- Monitors Stork oracle for yield rates
-- Borrows from vault based on user policies
-- Deposits to USYC (tokenized US Treasury fund)
-- Auto-redeems and repays with yield
-
-**gateway-yield** (Bounty 1: Cross-chain)
-- Uses Circle Gateway for unified USDC balance
-- Hunts best yields across Arc, Ethereum Sepolia, Base Sepolia, Avalanche Fuji
-- Bridges USDC via GatewayWallet (burn) → GatewayMinter (mint)
-- Returns profits to Arc and repays vault
-
-## Key Features
-
-- **Policy-Based Automation**: Users set thresholds, agent executes
-- **RWA Integration**: Real yield from US Treasury-backed USYC
-- **Mock Fallback**: Works without USYC allowlisting for demo
-- **Complete Cycle**: Borrow -> Yield -> Repay (not just deposit)
+Optional integrations:
+- `STORK_API_KEY` (RWA yield)
+- `BASE_SEPOLIA_RPC_URL` and `BASE_VAULT_ADDRESS` (Circle Gateway demo)
+- `SUI_PRIVATE_KEY` or `SUI_MNEMONIC` (DeepBook demo)
 
 ## Testing
-
 ```bash
 cd contracts/arc
 forge test -vv
-
-# With gas report
-forge test --gas-report
-```
-
-## Environment Variables
-
-```bash
-# Arc Chain
-ARC_RPC_URL=https://rpc.testnet.arc.network
-ARC_VAULT_ADDRESS=0xfc052abb90f5bd0b0c161105a9e2f9bf933fdffa
-ARC_USDC_ADDRESS=0x3600000000000000000000000000000000000000
-
-# USYC (RWA)
-ARC_USYC_ADDRESS=0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C
-ARC_USYC_TELLER=0x9fdF14c5B14173D74C08Af27AebFf39240dC105A
-
-# Agent
-PRIVATE_KEY=<agent-wallet-key>
-STORK_API_KEY=<stork-key>
-AGENT_POLL_INTERVAL=300000
-
-# Base Vault (Circle USDC)
-BASE_USDC_ADDRESS=0x036CbD53842c5426634e7929541eC2318f3dCF7e
-BASE_VAULT_ADDRESS=<base-vault-address>
-BASE_VAULT_DEPOSIT_BPS=10000
-BASE_VAULT_DEPOSIT_MIN_USDC=1
 ```
 
 ## Resources
-
-- [Architecture Diagram](./docs/architecture.md)
-- [Arc Testnet Docs](https://developers.circle.com/w3s/docs/programmable-wallets-overview)
-- [USYC Documentation](https://www.hashnote.com/)
-
-## License
-
-MIT
+- Architecture diagram: `docs/architecture.md`
+- DeepBook margin guide: `scripts/DEEPBOOK_MARGIN_YIELD.md`
 
 ---
 
-**Built for ETHGlobal HackMoney 2026**
+**TreasuryForge — Built for ETHGlobal HackMoney 2026**

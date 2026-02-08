@@ -5,6 +5,7 @@ interface DepositUIProps {
   vaultAddress: string;
   usdcAddress: string;
   agentApiUrl: string;
+  onAddressChange?: (address: string) => void;
 }
 
 const VAULT_ABI = [
@@ -19,6 +20,7 @@ const VAULT_ABI = [
   "function getBorrowedRWA(address user) external view returns (tuple(uint256 amount, uint256 borrowTime, address rwaToken))",
   "function getVaultStats() external view returns (uint256 tvl, uint256 totalBorrows, uint256 numUsers)",
   "function userDeposits(address) external view returns (uint256 amount, uint256 timestamp, bool active)",
+  "function getSuiAddress(address user) external view returns (bytes32)",
 ];
 
 const ERC20_ABI = [
@@ -29,11 +31,11 @@ const ERC20_ABI = [
 ];
 
 const ARC_CHAIN_ID = parseInt(import.meta.env.VITE_ARC_CHAIN_ID || "5042002");
-const ARC_NATIVE_USDC = "0x3600000000000000000000000000000000000000";
 
 export const DepositUI: React.FC<DepositUIProps> = ({
   vaultAddress,
   usdcAddress,
+  onAddressChange,
 }) => {
   const [depositAmount, setDepositAmount] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
@@ -46,6 +48,7 @@ export const DepositUI: React.FC<DepositUIProps> = ({
   const [withdrawRequestedAt, setWithdrawRequestedAt] = useState<number | null>(null);
   const [withdrawPending, setWithdrawPending] = useState(false);
   const [agentManagedSui, setAgentManagedSui] = useState(false);
+  const [suiAddress, setSuiAddress] = useState<string>("");
 
   // Wallet state
   const [connected, setConnected] = useState(false);
@@ -118,6 +121,7 @@ export const DepositUI: React.FC<DepositUIProps> = ({
       const signer = await provider.getSigner();
       const address = await signer.getAddress();
       setUserAddress(address);
+      onAddressChange?.(address);
       setConnected(true);
       setMessage("");
     } catch (error) {
@@ -152,6 +156,7 @@ export const DepositUI: React.FC<DepositUIProps> = ({
   const disconnectWallet = () => {
     setConnected(false);
     setUserAddress("");
+    onAddressChange?.("");
     setWalletUsdc("0");
     setVaultBalance("0");
     setVaultTvl("0");
@@ -197,12 +202,13 @@ export const DepositUI: React.FC<DepositUIProps> = ({
       const vault = new ethers.Contract(vaultAddress, VAULT_ABI, signer);
 
       // Fetch each independently so one failure doesn't block all
-      const [userDeposit, stats, borrowed, policy, withdrawRequest] = await Promise.all([
+      const [userDeposit, stats, borrowed, policy, withdrawRequest, suiBytes32] = await Promise.all([
         vault.userDeposits(userAddress).catch((e: any) => { console.error("userDeposits:", e.message); return [0n, 0n, false]; }),
         vault.getVaultStats().catch((e: any) => { console.error("getVaultStats:", e.message); return [0n, 0n, 0n]; }),
         vault.getBorrowedRWA(userAddress).catch((e: any) => { console.error("getBorrowedRWA:", e.message); return [0n, 0n, ethers.ZeroAddress]; }),
         vault.getPolicy(userAddress).catch((e: any) => { console.error("getPolicy:", e.message); return { yieldThreshold: 0n, maxBorrowAmount: 0n, enabled: false, strategy: "" }; }),
         vault.getWithdrawRequest(userAddress).catch((e: any) => { console.error("getWithdrawRequest:", e.message); return { amount: 0n, requestTime: 0n, pending: false }; }),
+        vault.getSuiAddress(userAddress).catch((e: any) => { console.error("getSuiAddress:", e.message); return ethers.ZeroHash; }),
       ]);
 
       // Wallet balance: try ERC20 balanceOf first, then native getBalance as fallback
@@ -242,7 +248,10 @@ export const DepositUI: React.FC<DepositUIProps> = ({
       setWithdrawPending(withdrawRequest.pending);
       setWithdrawRequestedAmount(ethers.formatUnits(withdrawRequest.amount || 0n, 6));
       setWithdrawRequestedAt(Number(withdrawRequest.requestTime || 0));
-      setAgentManagedSui(userDeposit[2] || false);
+      const suiBytes32Value = suiBytes32 ? String(suiBytes32) : "";
+      const normalizedSui = suiBytes32Value && suiBytes32Value !== ethers.ZeroHash ? suiBytes32Value : "";
+      setSuiAddress(normalizedSui);
+      setAgentManagedSui(Boolean(normalizedSui));
     } catch (error) {
       console.error("Fetch balances error:", error);
     }
@@ -406,6 +415,14 @@ export const DepositUI: React.FC<DepositUIProps> = ({
             <p className="text-lg font-semibold">{parseFloat(vaultBalance).toFixed(2)}</p>
           </div>
         </div>
+        {agentManagedSui && (
+          <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3">
+            <p className="text-xs text-white/50">Agent-Managed Sui Address</p>
+            <p className="mt-1 text-xs font-mono break-words text-white/70">
+              {suiAddress || "Pending..."}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Vault Stats */}

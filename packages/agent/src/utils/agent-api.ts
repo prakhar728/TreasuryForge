@@ -6,6 +6,8 @@ export interface LogEntry {
   title: string;
   detail: string;
   tag: string;
+  relevant?: boolean;
+  user?: string;
 }
 
 export interface Signal {
@@ -20,6 +22,7 @@ export interface Position {
   status: string;
   detail: string;
   tone: "emerald" | "amber" | "rose" | "sky";
+  user?: string;
 }
 
 export interface AgentState {
@@ -32,9 +35,14 @@ const LOG_BUFFER_SIZE = Number(process.env.AGENT_LOG_BUFFER || "200");
 const logBuffer: LogEntry[] = [];
 let state: AgentState = { signals: [], positions: [], lastAction: null };
 
-function parseLog(line: string): LogEntry {
+function parseLog(line: string, options?: { relevant?: boolean; user?: string }): LogEntry {
   const time = new Date().toISOString();
-  const trimmed = line.trim();
+  let trimmed = line.trim();
+  let explicitRelevant = false;
+  if (trimmed.startsWith("[RELEVANT]")) {
+    explicitRelevant = true;
+    trimmed = trimmed.replace("[RELEVANT]", "").trim();
+  }
   const tagMatch = trimmed.match(/^\[([^\]]+)\]/);
   const tag = tagMatch ? tagMatch[1].toLowerCase() : "agent";
 
@@ -50,12 +58,19 @@ function parseLog(line: string): LogEntry {
     detail = rest.join(": ");
   }
 
-  return { time, title, detail, tag };
+  return {
+    time,
+    title,
+    detail,
+    tag,
+    relevant: options?.relevant ?? explicitRelevant,
+    user: options?.user,
+  };
 }
 
-export function pushLog(line: string): void {
+export function pushLog(line: string, options?: { relevant?: boolean; user?: string }): void {
   if (!line) return;
-  const entry = parseLog(line);
+  const entry = parseLog(line, options);
   logBuffer.unshift(entry);
   if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.pop();
   state.lastAction = entry;
@@ -69,8 +84,22 @@ export function getAgentState(): AgentState {
   return state;
 }
 
-export function getLogs(): LogEntry[] {
-  return [...logBuffer];
+function normalizeUser(value?: string | null): string {
+  return value ? value.toLowerCase() : "";
+}
+
+export function getLogs(user?: string): LogEntry[] {
+  if (!user) return [...logBuffer];
+  const normalized = normalizeUser(user);
+  return logBuffer.filter((entry) => !entry.user || normalizeUser(entry.user) === normalized);
+}
+
+export function getAgentStateForUser(user?: string): AgentState {
+  if (!user) return state;
+  const normalized = normalizeUser(user);
+  const positions = state.positions.filter((p) => !p.user || normalizeUser(p.user) === normalized);
+  const lastAction = getLogs(user)[0] ?? null;
+  return { ...state, positions, lastAction };
 }
 
 export function initAgentApi(): void {
@@ -97,20 +126,22 @@ export function initAgentApi(): void {
     }
 
     if (url.pathname === "/logs") {
+      const user = url.searchParams.get("user") || undefined;
       res.writeHead(200, {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
       });
-      res.end(JSON.stringify({ entries: getLogs() }));
+      res.end(JSON.stringify({ entries: getLogs(user) }));
       return;
     }
 
     if (url.pathname === "/state") {
+      const user = url.searchParams.get("user") || undefined;
       res.writeHead(200, {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
       });
-      res.end(JSON.stringify(getAgentState()));
+      res.end(JSON.stringify(getAgentStateForUser(user)));
       return;
     }
 

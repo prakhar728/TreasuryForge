@@ -252,7 +252,7 @@ interface Plugin {
 
 | Contract | Address |
 |----------|---------|
-| TreasuryVault | `0xfc052abb90f5bd0b0c161105a9e2f9bf933fdffa` |
+| TreasuryVault | `0x028cf0f1c4ec91887a92bf8062a9aaae1c54c30c` |
 | USDC | `0x3600000000000000000000000000000000000000` |
 | USYC Token | `0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C` |
 | USYC Teller | `0x9fdF14c5B14173D74C08Af27AebFf39240dC105A` |
@@ -262,7 +262,7 @@ interface Plugin {
 ```bash
 # Arc Chain
 ARC_RPC_URL=https://rpc.testnet.arc.network
-ARC_VAULT_ADDRESS=0xfc052abb90f5bd0b0c161105a9e2f9bf933fdffa
+ARC_VAULT_ADDRESS=0x028cf0f1c4ec91887a92bf8062a9aaae1c54c30c
 ARC_USDC_ADDRESS=0x3600000000000000000000000000000000000000
 
 # USYC (RWA)

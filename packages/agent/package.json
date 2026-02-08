@@ -13,7 +13,7 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "setup:circle": "tsx scripts/setup-circle.ts",
     "bridge:base-sui-deepbook": "tsx scripts/wormhole-base-to-sui-deepbook.ts",
-    "bridge:nitro-base-sui-deepbook": "tsx scripts/router-nitro-base-to-sui-deepbook.ts"
+    "bridge:stargate-base-sui-deepbook": "tsx scripts/stargate-base-to-sui-deepbook.ts"
   },
   "dependencies": {
     "@bgd-labs/aave-address-book": "^4.44.7",

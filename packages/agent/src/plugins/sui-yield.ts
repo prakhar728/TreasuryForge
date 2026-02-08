@@ -1,20 +1,24 @@
 import { ethers } from "ethers";
-import { deepbook, testnetCoins, testnetPools, type DeepBookClient } from "@mysten/deepbook-v3";
+import { deepbook, testnetCoins, testnetPools, mainnetCoins, mainnetPools } from "@mysten/deepbook-v3";
 import type { SuiGrpcClient as SuiClientType } from "@mysten/sui/grpc";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 import { decodeSuiPrivateKey } from "@mysten/sui/cryptography";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { Transaction } from "@mysten/sui/transactions";
+import { createRequire } from "module";
 import { Plugin, PluginContext, YieldOpportunity, RebalanceAction } from "../types.js";
 import { TREASURY_VAULT_ABI } from "../abi/TreasuryVault.js";
-import {
-  initLiFi,
-  bridgeArcToSui,
-  bridgeSuiToArc,
-  getArcToSuiQuote,
-  checkSuiChainSupport,
-} from "../utils/lifi-bridge.js";
+import { Wormhole, circle, routes } from "@wormhole-foundation/sdk";
+import evmPlatform from "@wormhole-foundation/sdk/platforms/evm";
+import suiPlatform from "@wormhole-foundation/sdk/platforms/sui";
+import evm from "@wormhole-foundation/sdk/evm";
+import "@wormhole-labs/cctp-executor-route";
+import { cctpExecutorRoute } from "@wormhole-labs/cctp-executor-route";
+import { registerProtocol, protocolIsRegistered } from "@wormhole-foundation/sdk-definitions";
+import { _platform as evmPlatformCore } from "@wormhole-foundation/sdk-evm";
 import { AgentStorage } from "../utils/agent-storage.js";
+
+const require = createRequire(import.meta.url);
 
 // ============================================================
 // Sui Position Tracking (persistent, lazy-initialized)
@@ -25,13 +29,27 @@ function getStorage(): AgentStorage {
   return _storage;
 }
 
-// Demo-only: track which users already received a forced bridge
-const demoBridgedUsers = new Set<string>();
-
 // Minimum wait after withdraw request (12 hours)
 const MIN_WITHDRAW_DELAY_MS = 12 * 60 * 60 * 1000;
 
+const WORMHOLE_NETWORK = (process.env.WORMHOLE_NETWORK || "Mainnet") as "Mainnet" | "Testnet";
 const DEEPBOOK_USDC_COIN_KEY = process.env.DEEPBOOK_USDC_COIN_KEY || "DBUSDC";
+const SUI_NETWORK = (process.env.SUI_NETWORK ||
+  (WORMHOLE_NETWORK === "Mainnet" ? "mainnet" : "testnet")) as "mainnet" | "testnet";
+const WORMHOLE_BASE_CHAIN = process.env.WORMHOLE_BASE_CHAIN || "Base";
+const WORMHOLE_BASE_TO_SUI = String(process.env.WORMHOLE_BASE_TO_SUI || "true").toLowerCase() === "true";
+let loggedSuiNetwork = false;
+
+const BASE_MAINNET_RPC_URL = process.env.BASE_MAINNET_RPC_URL || "https://mainnet.base.org";
+const BASE_MAINNET_USDC_ADDRESS =
+  process.env.BASE_MAINNET_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+const { EvmCCTPExecutor } = require("@wormhole-labs/cctp-executor-route/dist/cjs/evm/index.js") as {
+  EvmCCTPExecutor: typeof import("@wormhole-labs/cctp-executor-route/dist/cjs/evm/executor.js").EvmCCTPExecutor;
+};
+if (!protocolIsRegistered(evmPlatformCore, "CCTPExecutor")) {
+  registerProtocol(evmPlatformCore, "CCTPExecutor", EvmCCTPExecutor);
+}
 
 async function ensureUserSuiKey(
   vault: ethers.Contract,
@@ -64,6 +82,18 @@ const SUI_YIELD_THRESHOLD = 7.0; // Only move if Sui yield > 7%
 // ============================================================
 let deepBookClient: any | null = null;
 
+function getSuiNetworkConfig() {
+  return SUI_NETWORK === "mainnet"
+    ? { network: "mainnet" as const, coins: mainnetCoins, pools: mainnetPools }
+    : { network: "testnet" as const, coins: testnetCoins, pools: testnetPools };
+}
+
+function getDefaultSuiRpcUrl() {
+  return SUI_NETWORK === "mainnet"
+    ? "https://fullnode.mainnet.sui.io:443"
+    : "https://fullnode.testnet.sui.io:443";
+}
+
 function getDeepBookClient(ctx: PluginContext): any | null {
   if (deepBookClient) return deepBookClient;
 
@@ -94,12 +124,15 @@ function getDeepBookClient(ctx: PluginContext): any | null {
     const address = keypair.toSuiAddress();
     console.log(`[Sui] Initializing DeepBook client for ${address}`);
 
+    const { network, coins, pools } = getSuiNetworkConfig();
     deepBookClient = new SuiGrpcClient({
-      network: "testnet",
-      baseUrl: ctx.suiConfig?.rpcUrl || "https://fullnode.testnet.sui.io:443",
+      network,
+      baseUrl: ctx.suiConfig?.rpcUrl || getDefaultSuiRpcUrl(),
     }).$extend(
       deepbook({
         address,
+        coins,
+        pools,
       })
     );
 
@@ -129,11 +162,12 @@ async function ensureBalanceManagerId(
   address: string,
   suiKeypair: Ed25519Keypair
 ): Promise<string> {
+  const { coins, pools } = getSuiNetworkConfig();
   const deepbookClient = client.$extend(
     deepbook({
       address,
-      coins: testnetCoins,
-      pools: testnetPools,
+      coins,
+      pools,
     })
   );
 
@@ -185,6 +219,13 @@ function calculateSpreadYield(spread: number, dailyTurns: number = 2): number {
   return Math.min(apy, 50); // Cap at 50% APY for sanity
 }
 
+function getPrimaryPoolKeys() {
+  if (SUI_NETWORK === "mainnet") {
+    return { primary: "SUI_USDC", secondary: "DEEP_USDC", quote: "USDC" };
+  }
+  return { primary: "SUI_DBUSDC", secondary: "DEEP_DBUSDC", quote: "DBUSDC" };
+}
+
 async function getDeepBookYields(ctx: PluginContext): Promise<DeepBookPool[]> {
   const client = getDeepBookClient(ctx);
 
@@ -205,10 +246,12 @@ async function getDeepBookYields(ctx: PluginContext): Promise<DeepBookPool[]> {
   try {
     const pools: DeepBookPool[] = [];
 
-    // Query SUI_DBUSDC pool - the main liquidity pool
+    const { primary, secondary, quote } = getPrimaryPoolKeys();
+
+    // Query primary pool - main liquidity pool
     try {
-      const bids = await client.deepbook.getLevel2Range("SUI_DBUSDC", 0.01, 1000, true);
-      const asks = await client.deepbook.getLevel2Range("SUI_DBUSDC", 0.01, 1000, false);
+      const bids = await client.deepbook.getLevel2Range(primary, 0.01, 1000, true);
+      const asks = await client.deepbook.getLevel2Range(primary, 0.01, 1000, false);
       const level2Data = buildLevel2(bids, asks);
 
       const { bestBid, bestAsk, totalBidLiquidity, totalAskLiquidity } = parseLevel2Data(level2Data);
@@ -219,34 +262,34 @@ async function getDeepBookYields(ctx: PluginContext): Promise<DeepBookPool[]> {
         const estimatedTvl = (totalBidLiquidity + totalAskLiquidity) * bestBid;
 
         pools.push({
-          poolKey: "SUI_DBUSDC",
+          poolKey: primary,
           baseAsset: "SUI",
-          quoteAsset: "DBUSDC",
+          quoteAsset: quote,
           apy: impliedApy,
           tvl: estimatedTvl,
           spread,
         });
 
         console.log(
-          `[Sui] SUI_DBUSDC: spread=${spread.toFixed(4)}%, implied APY=${impliedApy.toFixed(2)}%, ` +
+          `[Sui] ${primary}: spread=${spread.toFixed(4)}%, implied APY=${impliedApy.toFixed(2)}%, ` +
           `best bid=${bestBid.toFixed(4)}, best ask=${bestAsk.toFixed(4)}`
         );
       } else {
         const bidCount = Array.isArray(level2Data?.bids) ? level2Data.bids.length : 0;
         const askCount = Array.isArray(level2Data?.asks) ? level2Data.asks.length : 0;
         console.log(
-          `[Sui] SUI_DBUSDC: No valid bid/ask found ` +
+          `[Sui] ${primary}: No valid bid/ask found ` +
           `(bids=${bidCount}, asks=${askCount})`
         );
       }
     } catch (e: any) {
-      console.log("[Sui] Could not fetch SUI_DBUSDC pool:", e.message);
+      console.log(`[Sui] Could not fetch ${primary} pool:`, e.message);
     }
 
-    // Query DEEP_DBUSDC pool
+    // Query secondary pool
     try {
-      const bids = await client.deepbook.getLevel2Range("DEEP_DBUSDC", 0.001, 100, true);
-      const asks = await client.deepbook.getLevel2Range("DEEP_DBUSDC", 0.001, 100, false);
+      const bids = await client.deepbook.getLevel2Range(secondary, 0.001, 100, true);
+      const asks = await client.deepbook.getLevel2Range(secondary, 0.001, 100, false);
       const level2Data = buildLevel2(bids, asks);
 
       const { bestBid, bestAsk, totalBidLiquidity, totalAskLiquidity } = parseLevel2Data(level2Data);
@@ -257,27 +300,27 @@ async function getDeepBookYields(ctx: PluginContext): Promise<DeepBookPool[]> {
         const estimatedTvl = (totalBidLiquidity + totalAskLiquidity) * bestBid;
 
         pools.push({
-          poolKey: "DEEP_DBUSDC",
+          poolKey: secondary,
           baseAsset: "DEEP",
-          quoteAsset: "DBUSDC",
+          quoteAsset: quote,
           apy: impliedApy,
           tvl: estimatedTvl,
           spread,
         });
 
         console.log(
-          `[Sui] DEEP_DBUSDC: spread=${spread.toFixed(4)}%, implied APY=${impliedApy.toFixed(2)}%`
+          `[Sui] ${secondary}: spread=${spread.toFixed(4)}%, implied APY=${impliedApy.toFixed(2)}%`
         );
       } else {
         const bidCount = Array.isArray(level2Data?.bids) ? level2Data.bids.length : 0;
         const askCount = Array.isArray(level2Data?.asks) ? level2Data.asks.length : 0;
         console.log(
-          `[Sui] DEEP_DBUSDC: No valid bid/ask found ` +
+          `[Sui] ${secondary}: No valid bid/ask found ` +
           `(bids=${bidCount}, asks=${askCount})`
         );
       }
     } catch (e: any) {
-      console.log("[Sui] Could not fetch DEEP_DBUSDC pool:", e.message);
+      console.log(`[Sui] Could not fetch ${secondary} pool:`, e.message);
     }
 
     if (pools.length > 0) {
@@ -360,63 +403,215 @@ function getMockDeepBookYields(): DeepBookPool[] {
 }
 
 // ============================================================
-// LI.FI Bridge (Arc ↔ Sui)
+// Wormhole CCTP Bridge (Base → Sui)
 // ============================================================
-async function bridgeToSui(
+export type PendingBridgeStatus = {
+  user: string;
+  suiAddress: string;
+  amount: bigint;
+  startedAt: number;
+  txHash?: string;
+  poolKey: string;
+  apy?: number;
+};
+
+const pendingBridges = new Map<string, PendingBridgeStatus>();
+
+export function getPendingWormholeBridges(): PendingBridgeStatus[] {
+  return Array.from(pendingBridges.values());
+}
+
+function getBasePrivateKey(ctx: PluginContext): string {
+  return (
+    process.env.BASE_PRIVATE_KEY ||
+    process.env.EVM_PRIVATE_KEY ||
+    process.env.PRIVATE_KEY ||
+    ctx.privateKey ||
+    ""
+  );
+}
+
+async function getBaseSigner(chain: any, ctx: PluginContext) {
+  const key = getBasePrivateKey(ctx);
+  if (!key) throw new Error("Missing BASE_PRIVATE_KEY (or PRIVATE_KEY) for Base signer");
+  const signer = await (await evm()).getSigner(await chain.getRpc(), key);
+  return signer;
+}
+
+function getBaseChainConfig(ctx: PluginContext) {
+  return ctx.gatewayChains?.find((c) => c.name === "base");
+}
+
+function getWormholeBaseRpcUrl(ctx: PluginContext): string {
+  if (WORMHOLE_BASE_CHAIN.toLowerCase() === "base") {
+    return BASE_MAINNET_RPC_URL;
+  }
+  const base = getBaseChainConfig(ctx);
+  return base?.rpcUrl || "https://sepolia.base.org";
+}
+
+function getWormholeBaseUsdc(ctx: PluginContext): string {
+  if (WORMHOLE_BASE_CHAIN.toLowerCase() === "base") {
+    return BASE_MAINNET_USDC_ADDRESS;
+  }
+  const base = getBaseChainConfig(ctx);
+  return base?.usdcAddress || BASE_MAINNET_USDC_ADDRESS;
+}
+
+async function getBaseUsdcBalance(ctx: PluginContext): Promise<bigint> {
+  const provider = new ethers.JsonRpcProvider(getWormholeBaseRpcUrl(ctx));
+  const wallet = new ethers.Wallet(getBasePrivateKey(ctx), provider);
+  const usdc = new ethers.Contract(getWormholeBaseUsdc(ctx), ["function balanceOf(address) view returns (uint256)"], wallet);
+  return usdc.balanceOf(wallet.address);
+}
+
+async function bridgeBaseToSui(
   ctx: PluginContext,
   amount: bigint,
   forUser: string,
-  suiAddress: string
+  suiAddress: string,
+  poolKey: string,
+  apy?: number
 ): Promise<{ success: boolean; mocked: boolean; bridgeTxHash?: string }> {
-  // Initialize LI.FI if needed
-  initLiFi({
-    privateKey: ctx.privateKey,
-    arcRpcUrl: ctx.arcRpcUrl,
-    suiRpcUrl: ctx.suiConfig?.rpcUrl,
-  });
+  try {
+  const wh = new Wormhole(WORMHOLE_NETWORK, [evmPlatform.Platform, suiPlatform.Platform]);
+    const src = wh.getChain(WORMHOLE_BASE_CHAIN);
+    const dst = wh.getChain("Sui");
 
-  const suiSupport = await checkSuiChainSupport();
-  if (!suiSupport.supported) {
-    console.log("[Sui][Demo] LI.FI does not list Sui as a supported chain right now");
-    return { success: false, mocked: true };
-  }
+    const srcSigner = await getBaseSigner(src, ctx);
 
-  console.log(`[Sui] Bridging ${ethers.formatUnits(amount, 6)} USDC to Sui via LI.FI`);
+    const srcUsdc = circle.usdcContract.get(WORMHOLE_NETWORK, src.chain);
+    const dstUsdc = circle.usdcContract.get(WORMHOLE_NETWORK, dst.chain);
+    if (!srcUsdc || !dstUsdc) {
+      throw new Error("USDC is not configured for the selected Wormhole chains");
+    }
 
-  // Try to get a quote first to check if route is available
-  const quote = await getArcToSuiQuote(amount, forUser);
-  if (quote) {
-    console.log(`[Sui] LI.FI quote: ${quote.estimatedOutput} USDC via ${quote.bridgeUsed}, ~${quote.executionTime}s`);
-  }
+    const sender = Wormhole.chainAddress(src.chain, srcSigner.address());
+    const recipient = Wormhole.chainAddress(dst.chain, suiAddress);
+    const amountUsdc = Number(ethers.formatUnits(amount, 6));
 
-  // Execute bridge via LI.FI
-  const result = await bridgeArcToSui(amount, forUser, suiAddress);
-
-  if (result.success) {
-    // Track position
-    const existingPosition = getStorage().getPosition(forUser);
-    const currentAmount = existingPosition ? BigInt(existingPosition.usdcAmount) : 0n;
-    const poolShares = result.outputAmount || amount;
-
-    getStorage().upsertPosition({
-      user: forUser,
-      chain: "sui",
-      usdcAmount: (currentAmount + amount).toString(),
-      poolShares: poolShares.toString(),
-      depositTime: Date.now(),
-      bridgeTxHash: result.txHash,
-      status: "active",
+    const tr = await routes.RouteTransferRequest.create(wh, {
+      source: Wormhole.tokenId(src.chain, srcUsdc),
+      destination: Wormhole.tokenId(dst.chain, dstUsdc),
+      sourceDecimals: 6,
+      destinationDecimals: 6,
+      sender,
+      recipient,
     });
 
-    const status = result.mocked ? "[SIMULATED]" : "[REAL]";
-    console.log(`[Sui] Bridge ${status}: tx=${result.txHash}`);
-  }
+    const RouteImpl = cctpExecutorRoute();
+    const route = new RouteImpl(wh);
+    const validation = await route.validate(tr, { amount: amountUsdc });
+    if (!validation.valid) {
+      throw validation.error;
+    }
 
-  return {
-    success: result.success,
-    mocked: result.mocked,
-    bridgeTxHash: result.txHash,
-  };
+    const quote = await route.quote(tr, validation.params);
+    if (!quote.success) {
+      throw quote.error ?? new Error("Failed to fetch Wormhole CCTP quote");
+    }
+
+    console.log(
+      `[Sui] Wormhole CCTP quote: ${amountUsdc} USDC from ${WORMHOLE_BASE_CHAIN} → Sui`
+    );
+    console.log(`[Sui] Submitting Wormhole CCTP transfer...`);
+
+    const receipt = await route.initiate(tr, srcSigner, quote, recipient);
+    const lastTx = receipt.originTxs?.[receipt.originTxs.length - 1];
+    const txHash =
+      typeof lastTx === "string" ? lastTx : lastTx?.txid ? String(lastTx.txid) : undefined;
+
+    pendingBridges.set(forUser, {
+      user: forUser,
+      suiAddress,
+      amount,
+      startedAt: Date.now(),
+      txHash,
+      poolKey,
+      apy,
+    });
+
+    console.log(`[Sui] Wormhole transfer submitted${txHash ? `: ${txHash}` : ""}`);
+    if (txHash) {
+      const whNetwork = WORMHOLE_NETWORK.toLowerCase() === "testnet" ? "Testnet" : "Mainnet";
+      console.log(`[Sui][Explorer] WormholeScan: https://wormholescan.io/#/tx/${txHash}?network=${whNetwork}`);
+    }
+    return { success: true, mocked: false, bridgeTxHash: txHash };
+  } catch (error) {
+    console.error("[Sui] Wormhole bridge failed:", error);
+    return { success: false, mocked: true };
+  }
+}
+
+async function getSuiUsdcBalance(
+  client: SuiClientType,
+  owner: string,
+  coinType: string
+): Promise<number> {
+  try {
+    const balances = await client.listBalances({ owner });
+    const list = (balances as any)?.data || (balances as any)?.balances || balances;
+    if (Array.isArray(list)) {
+      const match = list.find((b: any) => b.coinType === coinType);
+      if (match) {
+        const raw = match.balance ?? match.coinBalance ?? match.totalBalance ?? match.amount;
+        if (raw !== undefined) return Number(raw) / 1e6;
+      }
+    }
+  } catch (error) {
+    console.log("[Sui] listBalances failed:", error);
+  }
+  return 0;
+}
+
+async function drainPendingBridges(ctx: PluginContext): Promise<RebalanceAction[]> {
+  const actions: RebalanceAction[] = [];
+  if (pendingBridges.size === 0) return actions;
+  const { network, coins } = getSuiNetworkConfig();
+  const suiRpcUrl = ctx.suiConfig?.rpcUrl || getDefaultSuiRpcUrl();
+  const suiClient = new SuiGrpcClient({ network, baseUrl: suiRpcUrl });
+
+  for (const [user, pending] of pendingBridges.entries()) {
+    const suiKey = getStorage().getSuiKey(user);
+    if (!suiKey) continue;
+    const balance = await getSuiUsdcBalance(suiClient, pending.suiAddress, coins.USDC.type);
+    if (balance <= 0) {
+      console.log(
+        `[Sui] Awaiting USDC on Sui for ${user.slice(0, 10)}... (pending Wormhole bridge)`
+      );
+      continue;
+    }
+
+    const amountToDeposit = BigInt(Math.floor(Math.min(balance, Number(ethers.formatUnits(pending.amount, 6))) * 1e6));
+    if (amountToDeposit <= 0n) continue;
+
+    const deepbookResult = await depositToDeepBook(ctx, user, amountToDeposit, pending.poolKey);
+    if (deepbookResult.success) {
+      getStorage().upsertPosition({
+        user,
+        chain: "sui",
+        usdcAmount: amountToDeposit.toString(),
+        poolShares: deepbookResult.poolShares.toString(),
+        depositTime: Date.now(),
+        bridgeTxHash: pending.txHash,
+        status: "active",
+      });
+      actions.push({
+        type: "deposit",
+        chain: "sui",
+        amount: amountToDeposit,
+        details: {
+          user,
+          protocol: "DeepBook",
+          pool: pending.poolKey,
+          apy: pending.apy,
+          mocked: deepbookResult.mocked,
+        },
+      });
+      pendingBridges.delete(user);
+    }
+  }
+  return actions;
 }
 
 async function bridgeFromSui(
@@ -432,118 +627,23 @@ async function bridgeFromSui(
   const positionAmount = BigInt(position.usdcAmount);
   const depositTime = position.depositTime;
 
-  // Initialize LI.FI if needed
-  initLiFi({
-    privateKey: ctx.privateKey,
-    arcRpcUrl: ctx.arcRpcUrl,
-    suiPrivateKey,
-    suiRpcUrl: ctx.suiConfig?.rpcUrl,
-  });
+  console.log(`[Sui] Reverse bridge via Wormhole not implemented yet (demo sim).`);
 
-  console.log(`[Sui] Bridging ${ethers.formatUnits(positionAmount, 6)} USDC back from Sui via LI.FI`);
-
-  // Calculate yield earned on Sui (based on DeepBook spread yield)
   const holdTimeMs = Date.now() - depositTime;
   const holdTimeYears = holdTimeMs / (365 * 24 * 60 * 60 * 1000);
 
-  // Use actual pool APY if available, otherwise estimate 8%
   const pools = await getDeepBookYields(ctx);
   const bestPool = pools.reduce((best, curr) => (curr.apy > best.apy ? curr : best), pools[0]);
   const yieldRate = bestPool ? bestPool.apy / 100 : 0.08;
 
-  // For demo, give at least 0.15% profit so it's visible
-  const minProfit = positionAmount / 666n; // ~0.15%
+  const minProfit = positionAmount / 666n;
   const calculatedProfit = BigInt(Math.floor(Number(positionAmount) * yieldRate * holdTimeYears));
   const profit = calculatedProfit > minProfit ? calculatedProfit : minProfit;
 
-  // Execute reverse bridge via LI.FI
-  const result = await bridgeSuiToArc(positionAmount, suiAddress, forUser);
+  const usdcReturned = positionAmount + profit;
+  getStorage().deletePosition(forUser);
 
-  if (result.success) {
-    const usdcReturned = (result.outputAmount || positionAmount) + profit;
-
-    const status = result.mocked ? "[SIMULATED]" : "[REAL]";
-    console.log(
-      `[Sui] Reverse bridge ${status}: ${ethers.formatUnits(usdcReturned, 6)} USDC ` +
-      `(+${ethers.formatUnits(profit, 6)} yield)`
-    );
-
-    getStorage().deletePosition(forUser);
-
-    return {
-      success: true,
-      mocked: result.mocked,
-      usdcReturned,
-      profit,
-    };
-  }
-
-  return { success: false, mocked: true, usdcReturned: 0n, profit: 0n };
-}
-
-// Demo-only: force a 1 USDC bridge from the agent wallet to user's Sui address
-async function demoBridgeArcToSui(
-  ctx: PluginContext,
-  user: string,
-  suiAddress: string
-): Promise<{ success: boolean; mocked: boolean; txHash?: string }> {
-  const demoEnabled = String(process.env.DEMO_FORCE_LIFI_BRIDGE || "").toLowerCase() === "true";
-  if (!demoEnabled) return { success: false, mocked: true };
-
-  if (demoBridgedUsers.has(user)) {
-    return { success: true, mocked: true };
-  }
-
-  const demoAmount = BigInt(Number(process.env.DEMO_FORCE_LIFI_AMOUNT || "1") * 1_000_000);
-  if (demoAmount <= 0n) return { success: false, mocked: true };
-
-  const provider = new ethers.JsonRpcProvider(ctx.arcRpcUrl);
-  const signer = new ethers.Wallet(ctx.privateKey, provider);
-  const agentAddress = await signer.getAddress();
-
-  try {
-    const usdc = new ethers.Contract(
-      ctx.usdcAddress,
-      ["function balanceOf(address) view returns (uint256)"],
-      signer
-    );
-    const balance = await usdc.balanceOf(agentAddress);
-    if (balance < demoAmount) {
-      console.log(
-        `[Sui][Demo] Agent USDC balance too low for demo bridge: ` +
-        `${ethers.formatUnits(balance, 6)} < ${ethers.formatUnits(demoAmount, 6)}`
-      );
-      return { success: false, mocked: true };
-    }
-  } catch (error) {
-    console.log("[Sui][Demo] Failed to check agent USDC balance:", error);
-    return { success: false, mocked: true };
-  }
-
-  // Initialize LI.FI if needed
-  initLiFi({
-    privateKey: ctx.privateKey,
-    arcRpcUrl: ctx.arcRpcUrl,
-    suiRpcUrl: ctx.suiConfig?.rpcUrl,
-  });
-
-  console.log(
-    `[Sui][Demo] Bridging ${ethers.formatUnits(demoAmount, 6)} USDC ` +
-    `from agent to ${user.slice(0, 10)}... (Sui ${suiAddress.slice(0, 10)}...)`
-  );
-
-  const quote = await getArcToSuiQuote(demoAmount, agentAddress, suiAddress);
-  if (quote) {
-    console.log(`[Sui][Demo] LI.FI quote: ${quote.estimatedOutput} USDC via ${quote.bridgeUsed}`);
-  }
-
-  const result = await bridgeArcToSui(demoAmount, agentAddress, suiAddress);
-  const status = result.mocked ? "[SIMULATED]" : "[REAL]";
-  console.log(`[Sui][Demo] Bridge ${status}: tx=${result.txHash}`);
-
-  if (result.success) demoBridgedUsers.add(user);
-
-  return { success: result.success, mocked: result.mocked, txHash: result.txHash };
+  return { success: true, mocked: true, usdcReturned, profit };
 }
 
 // ============================================================
@@ -561,8 +661,9 @@ async function depositToDeepBook(
       throw new Error("Missing Sui key for user");
     }
 
-    const suiRpcUrl = ctx.suiConfig?.rpcUrl || "https://fullnode.testnet.sui.io:443";
-    const suiClient = new SuiGrpcClient({ network: "testnet", baseUrl: suiRpcUrl });
+    const { network, coins, pools } = getSuiNetworkConfig();
+    const suiRpcUrl = ctx.suiConfig?.rpcUrl || getDefaultSuiRpcUrl();
+    const suiClient = new SuiGrpcClient({ network, baseUrl: suiRpcUrl });
     const suiKeypair = getSuiKeypair(suiKey.privateKey);
     const address = suiKey.suiAddress;
 
@@ -571,8 +672,8 @@ async function depositToDeepBook(
     const deepbookClient = suiClient.$extend(
       deepbook({
         address,
-        coins: testnetCoins,
-        pools: testnetPools,
+        coins,
+        pools,
         balanceManagers: {
           [balanceManagerId]: { address: balanceManagerId },
         },
@@ -678,6 +779,13 @@ export const suiYieldPlugin: Plugin = {
     const provider = new ethers.JsonRpcProvider(ctx.arcRpcUrl);
     const signer = new ethers.Wallet(ctx.privateKey, provider);
     const vault = new ethers.Contract(ctx.vaultAddress, TREASURY_VAULT_ABI, signer);
+
+    if (!loggedSuiNetwork) {
+      console.log(`[Sui] Network set to ${SUI_NETWORK} (Wormhole ${WORMHOLE_NETWORK})`);
+      loggedSuiNetwork = true;
+    }
+
+    actions.push(...await drainPendingBridges(ctx));
 
     // ============================================================
     // Phase 1: Return mature Sui positions to Arc
@@ -810,9 +918,6 @@ export const suiYieldPlugin: Plugin = {
           continue;
         }
 
-        // Demo-only forced bridge to prove LI.FI path works
-        await demoBridgeArcToSui(ctx, user, suiKey.suiAddress);
-
         // Skip if already has Sui position
         if (getStorage().getPosition(user)) {
           console.log(`[Sui] ${user.slice(0, 10)}... already has Sui position`);
@@ -830,7 +935,61 @@ export const suiYieldPlugin: Plugin = {
           continue;
         }
 
-        // Check if already borrowed
+        // If Wormhole Base->Sui flow is enabled, use Base USDC availability instead of Arc borrow state
+        if (WORMHOLE_BASE_TO_SUI) {
+          const gatewayPositions = getStorage().listGatewayPositions();
+          const gatewayPos = gatewayPositions.find(
+            (p) => p.user.toLowerCase() === user.toLowerCase() && p.status === "active"
+          );
+          if (!gatewayPos) {
+            console.log(`[Sui] ${user.slice(0, 10)}... no Base vault position yet, skip`);
+            continue;
+          }
+
+          const baseBalance = await getBaseUsdcBalance(ctx);
+          const desired = BigInt(gatewayPos.amount || "0");
+          if (baseBalance < desired || desired === 0n) {
+            console.log(
+              `[Sui] Base USDC balance too low for Wormhole bridge: ` +
+              `${ethers.formatUnits(baseBalance, 6)} < ${ethers.formatUnits(desired, 6)}`
+            );
+            continue;
+          }
+
+          console.log(`[Sui] Base USDC detected. Bridging via Wormhole for ${user.slice(0, 10)}...`);
+          const bridgeResult = await bridgeBaseToSui(
+            ctx,
+            desired,
+            user,
+            suiKey.suiAddress,
+            bestPool.poolKey,
+            bestPool.apy
+          );
+          if (bridgeResult.success) {
+            actions.push({
+              type: "bridge",
+              chain: "base",
+              amount: desired,
+              details: {
+                user,
+                direction: "outbound",
+                from: "base",
+                to: "sui",
+                protocol: "Wormhole CCTP",
+                stage: "mint",
+                mocked: bridgeResult.mocked,
+              },
+              txHash: bridgeResult.bridgeTxHash,
+            });
+            console.log(
+              `[RELEVANT][Sui] Wormhole bridge queued for ${user.slice(0, 10)}... ` +
+              `will deposit to DeepBook when USDC arrives on Sui`
+            );
+          }
+          continue;
+        }
+
+        // Check if already borrowed (Arc-only path)
         const borrowed = await vault.getBorrowedRWA(user);
         if (borrowed.amount > 0n) {
           continue;
@@ -850,64 +1009,64 @@ export const suiYieldPlugin: Plugin = {
 
         console.log(`[Sui] Processing ${user.slice(0, 10)}... for Sui DeepBook yield`);
 
-        // Step 1: Borrow from vault
-        const borrowTx = await vault.borrowRWA(user, borrowAmount, ctx.usdcAddress);
-        const borrowReceipt = await borrowTx.wait();
+        // Step 1: Borrow from vault unless we are sourcing from Base via Wormhole
+        if (!WORMHOLE_BASE_TO_SUI) {
+          const borrowTx = await vault.borrowRWA(user, borrowAmount, ctx.usdcAddress);
+          const borrowReceipt = await borrowTx.wait();
 
-        actions.push({
-          type: "borrow",
-          chain: "arc",
-          amount: borrowAmount,
-          details: { user, strategy: "DeFi_Yield", destination: "sui" },
-          txHash: borrowReceipt.hash,
-        });
+          actions.push({
+            type: "borrow",
+            chain: "arc",
+            amount: borrowAmount,
+            details: { user, strategy: "DeFi_Yield", destination: "sui" },
+            txHash: borrowReceipt.hash,
+          });
 
-        console.log(`[Sui] Borrow tx: ${borrowReceipt.hash}`);
+          console.log(`[Sui] Borrow tx: ${borrowReceipt.hash}`);
+        } else {
+          const baseBalance = await getBaseUsdcBalance(ctx);
+          if (baseBalance < borrowAmount) {
+            console.log(
+              `[Sui] Base USDC balance too low for Wormhole bridge: ` +
+              `${ethers.formatUnits(baseBalance, 6)} < ${ethers.formatUnits(borrowAmount, 6)}`
+            );
+            continue;
+          }
+          console.log(`[Sui] Using Base USDC balance for Wormhole bridge`);
+        }
 
-        // Step 2: Bridge to Sui via LI.FI
-        const bridgeResult = await bridgeToSui(ctx, borrowAmount, user, suiKey.suiAddress);
+        // Step 2: Bridge to Sui via Wormhole (CCTP executor route)
+        const bridgeResult = await bridgeBaseToSui(
+          ctx,
+          borrowAmount,
+          user,
+          suiKey.suiAddress,
+          bestPool.poolKey,
+          bestPool.apy
+        );
 
         if (bridgeResult.success) {
           actions.push({
             type: "bridge",
-            chain: "arc",
+            chain: "base",
             amount: borrowAmount,
             details: {
+              user,
               direction: "outbound",
-              from: "arc",
+              from: "base",
               to: "sui",
-              protocol: "LI.FI",
+              protocol: "Wormhole CCTP",
               mocked: bridgeResult.mocked,
             },
             txHash: bridgeResult.bridgeTxHash,
           });
-        }
-
-        // Step 3: Deposit to DeepBook
-        const deepbookResult = await depositToDeepBook(ctx, user, borrowAmount, bestPool.poolKey);
-
-        if (deepbookResult.success) {
-          actions.push({
-            type: "deposit",
-            chain: "sui",
-            amount: deepbookResult.poolShares,
-            details: {
-              user,
-              protocol: "DeepBook",
-              pool: `${bestPool.baseAsset}/${bestPool.quoteAsset}`,
-              apy: bestPool.apy,
-              mocked: deepbookResult.mocked,
-            },
-          });
-
           console.log(
-            `[Sui] Deposited to DeepBook: ${ethers.formatUnits(borrowAmount, 6)} USDC ` +
-            `(${bestPool.apy.toFixed(2)}% APY)` +
-            (deepbookResult.mocked ? " [SIMULATED]" : "")
+            `[RELEVANT][Sui] Wormhole bridge queued for ${user.slice(0, 10)}... ` +
+            `will deposit to DeepBook when USDC arrives on Sui`
           );
-        } else {
-          console.log(`[Sui] DeepBook deposit failed for ${user.slice(0, 10)}...`);
         }
+
+        continue;
       } catch (error) {
         console.error(`[Sui] Error processing ${user}:`, error);
       }

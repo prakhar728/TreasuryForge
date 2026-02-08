@@ -13,16 +13,7 @@ import { logExplorerTx } from "../utils/tx-links.js";
 // ============================================================
 // Cross-chain position tracking (in-memory for MVP)
 // ============================================================
-interface CrossChainPosition {
-  user: string;
-  sourceChain: string;
-  destinationChain: string;
-  amount: bigint;
-  depositTime: number;
-  depositTxHash?: string;
-}
-
-const crossChainPositions: Map<string, CrossChainPosition> = new Map();
+const GATEWAY_RETRY_COOLDOWN_MS = Number(process.env.GATEWAY_RETRY_COOLDOWN_MS || "900000"); // 15 min
 
 // Minimum time before returning funds (demo: 2 minutes)
 const MIN_HOLD_TIME_MS = 2 * 60 * 1000;
@@ -148,6 +139,23 @@ function getStorage(): AgentStorage {
   return _storage;
 }
 
+function getGatewayPositions() {
+  return getStorage().listGatewayPositions().filter((p) => p.status === "active");
+}
+
+function markGatewayBlocked(user: string, destinationChain: string, amount: bigint, reason: string) {
+  getStorage().upsertGatewayPosition({
+    user,
+    destinationChain,
+    amount: amount.toString(),
+    depositTime: Date.now(),
+    txHash: null,
+    status: "blocked",
+    lastAttempt: Date.now(),
+    lastError: reason,
+  });
+}
+
 let _baseSepoliaNonceManager: NonceManager | null = null;
 async function getBaseSepoliaSigner(ctx: PluginContext): Promise<NonceManager> {
   if (_baseSepoliaNonceManager) return _baseSepoliaNonceManager;
@@ -268,6 +276,7 @@ async function withdrawFromBaseVault(
 ): Promise<{ success: boolean; txHash?: string; amountWithdrawn?: bigint }> {
   let attemptedRetry = false;
   try {
+    console.log(`[Base Vault] Withdraw config: vault=${ctx.baseVaultAddress || "<empty>"} rpc=${getBaseSepoliaRpcUrl()}`);
     if (!ctx.baseVaultAddress) {
       console.log("[Base Vault] BASE_VAULT_ADDRESS not set, cannot withdraw");
       return { success: false };
@@ -848,7 +857,7 @@ export const gatewayYieldPlugin: Plugin = {
     }
 
     // Check for positions ready to return
-    const readyToReturn = Array.from(crossChainPositions.values()).filter(
+    const readyToReturn = getGatewayPositions().filter(
       (p) => Date.now() - p.depositTime >= MIN_HOLD_TIME_MS
     );
     if (readyToReturn.length > 0) {
@@ -890,7 +899,7 @@ export const gatewayYieldPlugin: Plugin = {
     );
 
     // Check if there are positions to return
-    const hasReturnablePositions = Array.from(crossChainPositions.values()).some(
+    const hasReturnablePositions = getGatewayPositions().some(
       (p) => Date.now() - p.depositTime >= MIN_HOLD_TIME_MS
     );
 
@@ -918,7 +927,7 @@ export const gatewayYieldPlugin: Plugin = {
     // ============================================================
     // Phase 1: Return mature cross-chain positions to Arc
     // ============================================================
-    for (const [posKey, position] of crossChainPositions.entries()) {
+    for (const position of getGatewayPositions()) {
       if (Date.now() - position.depositTime < MIN_HOLD_TIME_MS) {
         const remainingSecs = Math.ceil((MIN_HOLD_TIME_MS - (Date.now() - position.depositTime)) / 1000);
         console.log(`[Gateway] Position for ${position.user.slice(0, 10)}... on ${position.destinationChain} needs ${remainingSecs}s more`);
@@ -935,20 +944,32 @@ export const gatewayYieldPlugin: Plugin = {
         continue;
       }
 
+      let positionAmount = BigInt(position.amount);
+
       // If funds are parked in Base vault, withdraw them first
       if (destChain.name === "base") {
-        const withdrawResult = await withdrawFromBaseVault(ctx, position.amount);
+        const withdrawResult = await withdrawFromBaseVault(ctx, positionAmount);
         if (!withdrawResult.success) {
           console.log("[Gateway] Base vault withdraw failed, skipping return");
           continue;
         }
         if (withdrawResult.amountWithdrawn) {
-          position.amount = withdrawResult.amountWithdrawn;
+          positionAmount = withdrawResult.amountWithdrawn;
+          getStorage().upsertGatewayPosition({
+            user: position.user,
+            destinationChain: position.destinationChain,
+            amount: positionAmount.toString(),
+            depositTime: position.depositTime,
+            txHash: position.txHash || null,
+            status: "active",
+            lastAttempt: Date.now(),
+            lastError: null,
+          });
         }
       }
 
       // Step 1: Deposit to Gateway on destination chain
-      const depositResult = await depositToGateway(ctx, destChain, position.amount);
+      const depositResult = await depositToGateway(ctx, destChain, positionAmount);
       if (!depositResult.success) {
         console.log(`[Gateway] Return deposit failed on ${destChain.name}, skipping`);
         continue;
@@ -957,11 +978,14 @@ export const gatewayYieldPlugin: Plugin = {
       actions.push({
         type: "bridge",
         chain: position.destinationChain,
-        amount: position.amount,
+        amount: positionAmount,
         details: {
+          user: position.user,
           direction: "return-deposit",
           from: position.destinationChain,
           to: "arc",
+          protocol: "Gateway",
+          stage: "burn",
           mocked: depositResult.mocked,
         },
         txHash: depositResult.txHash,
@@ -971,7 +995,7 @@ export const gatewayYieldPlugin: Plugin = {
       const destDomain = CHAIN_DOMAINS[destChain.name] ?? 0;
       const balance = await getGatewayBalance(await signer.getAddress(), destDomain);
       const maxFee = getGatewayMaxFee();
-      let amountToReturn = position.amount;
+      let amountToReturn = positionAmount;
       const required = amountToReturn + maxFee;
       if (balance < required) {
         const adjusted = balance - maxFee;
@@ -995,9 +1019,25 @@ export const gatewayYieldPlugin: Plugin = {
         continue;
       }
 
+      actions.push({
+        type: "bridge",
+        chain: "arc",
+        amount: amountToReturn,
+        details: {
+          user: position.user,
+          direction: "return-mint",
+          from: position.destinationChain,
+          to: "arc",
+          protocol: "Gateway",
+          stage: "mint",
+          mocked: transferResult.mocked,
+        },
+        txHash: transferResult.txHash,
+      });
+
       // Step 3: Repay vault (no simulated profit until real yield protocols)
       const profit = 0n;
-      const totalReturn = position.amount;
+      const totalReturn = positionAmount;
 
       try {
         const borrowed = await vault.getBorrowedRWA(position.user);
@@ -1029,7 +1069,7 @@ export const gatewayYieldPlugin: Plugin = {
         console.error(`[Gateway] Repay failed:`, error);
       }
 
-      crossChainPositions.delete(posKey);
+      getStorage().deleteGatewayPosition(position.user);
     }
 
     // ============================================================
@@ -1083,10 +1123,20 @@ export const gatewayYieldPlugin: Plugin = {
           continue;
         }
         // Skip if already has cross-chain position
-        const posKey = `${user}-gateway`;
-        if (crossChainPositions.has(posKey)) {
-          console.log(`[Gateway] ${user.slice(0, 10)}... already has cross-chain position`);
-          continue;
+        const existing = getStorage().getGatewayPosition(user);
+        if (existing) {
+          if (existing.status === "active") {
+            console.log(`[Gateway] ${user.slice(0, 10)}... already has cross-chain position`);
+            continue;
+          }
+          if (existing.status === "blocked") {
+            const elapsed = Date.now() - existing.lastAttempt;
+            if (elapsed < GATEWAY_RETRY_COOLDOWN_MS) {
+              const remaining = Math.ceil((GATEWAY_RETRY_COOLDOWN_MS - elapsed) / 1000);
+              console.log(`[Gateway] ${user.slice(0, 10)}... bridge blocked, retry in ${remaining}s`);
+              continue;
+            }
+          }
         }
 
         const [amount, , active] = await vault.userDeposits(user);
@@ -1185,9 +1235,25 @@ export const gatewayYieldPlugin: Plugin = {
             bridgeMocked = depositResult.mocked || false;
             if (!depositResult.success) {
               console.log(`[Gateway] Bridge deposit failed, skipping position creation`);
+              markGatewayBlocked(user, bestYield.chain, effectiveBorrow, "gateway-deposit-failed");
               continue;
             }
             depositTxHash = depositResult.txHash;
+            actions.push({
+              type: "bridge",
+              chain: arcChain.name,
+              amount: effectiveBorrow,
+              details: {
+                user,
+                direction: "gateway-burn",
+                from: arcChain.name,
+                to: "gateway",
+                protocol: "Gateway",
+                stage: "burn",
+                mocked: depositResult.mocked,
+              },
+              txHash: depositResult.txHash,
+            });
           }
 
           const maxFee = getGatewayMaxFee();
@@ -1199,6 +1265,7 @@ export const gatewayYieldPlugin: Plugin = {
                 `[Gateway] Insufficient unified balance for fee. Balance=${ethers.formatUnits(balance, 6)} ` +
                 `Fee=${ethers.formatUnits(maxFee, 6)}. Lower GATEWAY_MAX_FEE or deposit more.`
               );
+              markGatewayBlocked(user, bestYield.chain, amountToTransfer, "insufficient-unified-balance");
               continue;
             }
             amountToTransfer = adjusted;
@@ -1212,6 +1279,7 @@ export const gatewayYieldPlugin: Plugin = {
           bridgeMocked = transferResult.mocked || false;
           if (!transferResult.success) {
             console.log(`[Gateway] Transfer via Gateway failed, skipping position creation`);
+            markGatewayBlocked(user, bestYield.chain, amountToTransfer, "gateway-transfer-failed");
             continue;
           }
 
@@ -1220,25 +1288,34 @@ export const gatewayYieldPlugin: Plugin = {
             chain: destChain.name,
             amount: amountToTransfer,
             details: {
+              user,
               direction: "unified-transfer",
               from: arcChain.name,
               to: destChain.name,
               protocol: bestYield.protocol,
+              stage: "mint",
               mocked: bridgeMocked,
             },
             txHash: transferResult.txHash,
           });
           logExplorerTx(destChain.name, transferResult.txHash, "Gateway transfer");
+          if (destChain.name === "base") {
+            console.log(
+              `[RELEVANT][Base] USDC detected on Base ${destChain.chainId === 84532 ? "Sepolia" : "mainnet"}`
+            );
+          }
         }
 
         // Track position
-        crossChainPositions.set(posKey, {
+        getStorage().upsertGatewayPosition({
           user,
-          sourceChain: "arc",
           destinationChain: bestYield.chain,
-          amount: amountToTransfer,
+          amount: amountToTransfer.toString(),
           depositTime: Date.now(),
-          depositTxHash,
+          txHash: depositTxHash || null,
+          status: "active",
+          lastAttempt: Date.now(),
+          lastError: null,
         });
 
         console.log(
@@ -1262,16 +1339,23 @@ export const gatewayYieldPlugin: Plugin = {
               chain: "base-sepolia",
               amount: deposited,
               details: {
+                user,
                 protocol: "BaseVault",
                 vault: ctx.baseVaultAddress,
                 depositBps: getBaseVaultDepositBps(),
               },
               txHash: depositResult.txHash,
             });
-            const currentPos = crossChainPositions.get(posKey);
-            if (currentPos) {
-              currentPos.amount = deposited;
-            }
+            getStorage().upsertGatewayPosition({
+              user,
+              destinationChain: bestYield.chain,
+              amount: deposited.toString(),
+              depositTime: Date.now(),
+              txHash: depositTxHash || null,
+              status: "active",
+              lastAttempt: Date.now(),
+              lastError: null,
+            });
             if (deposited !== amountToTransfer) {
               console.log(
                 `[Gateway] Base vault deposit used ${ethers.formatUnits(deposited, 6)} ` +
