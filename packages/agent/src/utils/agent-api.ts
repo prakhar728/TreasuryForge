@@ -103,7 +103,7 @@ export function getAgentStateForUser(user?: string): AgentState {
 }
 
 export function initAgentApi(): void {
-  const port = Number(process.env.AGENT_API_PORT || "3001");
+  const port = Number(process.env.AGENT_API_PORT || process.env.PORT || "3001");
 
   const server = http.createServer((req, res) => {
     if (!req.url) {
