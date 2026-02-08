@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { ethers } from "ethers";
+import { ethers, NonceManager } from "ethers";
 import axios from "axios";
 import { AaveV3BaseSepolia } from "@bgd-labs/aave-address-book";
 import { Plugin, PluginContext, YieldOpportunity, RebalanceAction, ChainConfig } from "../types.js";
@@ -84,11 +84,23 @@ function getBaseSepoliaCometAddress() {
 }
 
 function getBaseSepoliaSwapRouter() {
-  return process.env.BASE_SEPOLIA_SWAP_ROUTER || "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4";
+  const value = process.env.BASE_SEPOLIA_SWAP_ROUTER;
+  if (value && value.trim()) return value.trim();
+  return "";
 }
 
 function getBaseSepoliaSwapFee() {
   return Number(process.env.BASE_SEPOLIA_SWAP_FEE || "3000");
+}
+
+function getBaseVaultDepositBps() {
+  const raw = Number(process.env.BASE_VAULT_DEPOSIT_BPS || "10000");
+  if (!Number.isFinite(raw)) return 10000;
+  return Math.max(0, Math.min(10000, Math.floor(raw)));
+}
+
+function getBaseVaultMinDepositUsdc() {
+  return process.env.BASE_VAULT_DEPOSIT_MIN_USDC || "1";
 }
 
 function getGatewayApiBaseUrl() {
@@ -135,14 +147,132 @@ function getStorage(): AgentStorage {
   if (!_storage) _storage = new AgentStorage();
   return _storage;
 }
+
+let _baseSepoliaNonceManager: NonceManager | null = null;
+async function getBaseSepoliaSigner(ctx: PluginContext): Promise<NonceManager> {
+  if (_baseSepoliaNonceManager) return _baseSepoliaNonceManager;
+  const provider = new ethers.JsonRpcProvider(getBaseSepoliaRpcUrl());
+  const wallet = new ethers.Wallet(ctx.privateKey, provider);
+  const nm = new NonceManager(wallet);
+  // Warm nonce cache using pending nonce
+  await nm.getNonce("pending");
+  _baseSepoliaNonceManager = nm;
+  return nm;
+}
+
+function computeBaseVaultDepositAmount(amount: bigint): bigint {
+  const bps = getBaseVaultDepositBps();
+  const min = ethers.parseUnits(getBaseVaultMinDepositUsdc(), 6);
+  let deposit = (amount * BigInt(bps)) / 10000n;
+  if (deposit < min) {
+    deposit = amount >= min ? min : 0n;
+  }
+  if (deposit > amount) deposit = amount;
+  return deposit;
+}
+
+async function depositToBaseVault(
+  ctx: PluginContext,
+  baseChain: ChainConfig,
+  amount: bigint,
+  meta?: { user?: string }
+): Promise<{ success: boolean; txHash?: string; amountDeposited?: bigint }> {
+  try {
+    if (!ctx.baseVaultAddress) {
+      console.log("[Base Vault] BASE_VAULT_ADDRESS not set, skipping deposit");
+      return { success: false };
+    }
+
+    const wallet = await getBaseSepoliaSigner(ctx);
+    const usdc = new ethers.Contract(baseChain.usdcAddress, ERC20_ABI, wallet);
+    const vault = new ethers.Contract(ctx.baseVaultAddress, TREASURY_VAULT_ABI, wallet);
+
+    const balance = await usdc.balanceOf(wallet.address);
+    let depositAmount = computeBaseVaultDepositAmount(amount);
+    if (depositAmount === 0n) {
+      console.log("[Base Vault] Computed deposit amount is 0, skipping");
+      return { success: false };
+    }
+
+    if (balance < depositAmount) {
+      const adjusted = balance;
+      if (adjusted <= 0n) {
+        console.log("[Base Vault] Insufficient USDC balance for deposit");
+        return { success: false };
+      }
+      console.log(
+        `[Base Vault] Adjusting deposit amount to ${ethers.formatUnits(adjusted, 6)} USDC due to balance`
+      );
+      depositAmount = adjusted;
+    }
+
+    const allowance = await usdc.allowance(wallet.address, ctx.baseVaultAddress);
+    if (allowance < depositAmount) {
+      const approveTx = await usdc.approve(ctx.baseVaultAddress, depositAmount);
+      await approveTx.wait();
+    }
+
+    const depositTx = await vault.deposit(depositAmount);
+    const receipt = await depositTx.wait();
+
+    console.log(
+      `[Base Vault] Deposited ${ethers.formatUnits(depositAmount, 6)} USDC` +
+        (meta?.user ? ` for ${meta.user.slice(0, 10)}...` : "")
+    );
+    logExplorerTx("base", receipt.hash, "Base vault deposit");
+
+    return { success: true, txHash: receipt.hash, amountDeposited: depositAmount };
+  } catch (error) {
+    console.error("[Base Vault] Deposit failed:", error);
+    return { success: false };
+  }
+}
+
+async function withdrawFromBaseVault(
+  ctx: PluginContext,
+  amount: bigint
+): Promise<{ success: boolean; txHash?: string; amountWithdrawn?: bigint }> {
+  try {
+    if (!ctx.baseVaultAddress) {
+      console.log("[Base Vault] BASE_VAULT_ADDRESS not set, cannot withdraw");
+      return { success: false };
+    }
+
+    const wallet = await getBaseSepoliaSigner(ctx);
+    const vault = new ethers.Contract(ctx.baseVaultAddress, TREASURY_VAULT_ABI, wallet);
+
+    const vaultBalance = await vault.balanceOf(wallet.address);
+    let withdrawAmount = amount;
+    if (vaultBalance < withdrawAmount) {
+      if (vaultBalance <= 0n) {
+        console.log("[Base Vault] No vault balance to withdraw");
+        return { success: false };
+      }
+      console.log(
+        `[Base Vault] Adjusting withdraw amount to ${ethers.formatUnits(vaultBalance, 6)} USDC due to vault balance`
+      );
+      withdrawAmount = vaultBalance;
+    }
+
+    const withdrawTx = await vault.withdraw(withdrawAmount);
+    const receipt = await withdrawTx.wait();
+
+    console.log(`[Base Vault] Withdrew ${ethers.formatUnits(withdrawAmount, 6)} USDC`);
+    logExplorerTx("base", receipt.hash, "Base vault withdraw");
+
+    return { success: true, txHash: receipt.hash, amountWithdrawn: withdrawAmount };
+  } catch (error) {
+    console.error("[Base Vault] Withdraw failed:", error);
+    return { success: false };
+  }
+}
 async function supplyToAaveBaseSepolia(
   ctx: PluginContext,
   amount: bigint,
   meta?: { user?: string; apy?: number }
 ): Promise<{ success: boolean; txHash?: string; mocked?: boolean }> {
   try {
-    const provider = new ethers.JsonRpcProvider(getBaseSepoliaRpcUrl());
-    const wallet = new ethers.Wallet(ctx.privateKey, provider);
+    const wallet = await getBaseSepoliaSigner(ctx);
 
     const usdcAddress = AaveV3BaseSepolia.ASSETS.USDC.UNDERLYING;
     const poolAddress = AaveV3BaseSepolia.POOL;
@@ -235,8 +365,7 @@ async function supplyToCompoundBaseSepolia(
     const cometAddress = getBaseSepoliaCometAddress();
     if (!cometAddress) throw new Error("Missing BASE_SEPOLIA_COMET_ADDRESS");
 
-    const provider = new ethers.JsonRpcProvider(getBaseSepoliaRpcUrl());
-    const wallet = new ethers.Wallet(ctx.privateKey, provider);
+    const wallet = await getBaseSepoliaSigner(ctx);
 
     const usdcAddress = AaveV3BaseSepolia.ASSETS.USDC.UNDERLYING;
 
@@ -304,9 +433,13 @@ async function swapCircleToMockUsdcOnBase(
 ): Promise<{ success: boolean; txHash?: string; amountOut?: bigint }> {
   try {
     const routerAddress = getBaseSepoliaSwapRouter();
+    if (!routerAddress) {
+      console.error("[Base Sepolia/Swap] Missing BASE_SEPOLIA_SWAP_ROUTER in .env");
+      return { success: false };
+    }
+    console.log(`[Base Sepolia/Swap] Using router: ${routerAddress}`);
     const fee = getBaseSepoliaSwapFee();
-    const provider = new ethers.JsonRpcProvider(getBaseSepoliaRpcUrl());
-    const wallet = new ethers.Wallet(ctx.privateKey, provider);
+    const wallet = await getBaseSepoliaSigner(ctx);
 
     // NOTE: Circle USDC on Base Sepolia is 0x036CbD..., Aave/Comet mock USDC is 0xba50Cd...
     const circleUsdcAddress = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
@@ -761,6 +894,18 @@ export const gatewayYieldPlugin: Plugin = {
         continue;
       }
 
+      // If funds are parked in Base vault, withdraw them first
+      if (destChain.name === "base") {
+        const withdrawResult = await withdrawFromBaseVault(ctx, position.amount);
+        if (!withdrawResult.success) {
+          console.log("[Gateway] Base vault withdraw failed, skipping return");
+          continue;
+        }
+        if (withdrawResult.amountWithdrawn) {
+          position.amount = withdrawResult.amountWithdrawn;
+        }
+      }
+
       // Step 1: Deposit to Gateway on destination chain
       const depositResult = await depositToGateway(ctx, destChain, position.amount);
       if (!depositResult.success) {
@@ -934,13 +1079,13 @@ export const gatewayYieldPlugin: Plugin = {
         let effectiveBorrow = borrowAmount;
         let borrowTxHash: string | undefined;
         if (isBaseSepoliaDemoEnabled()) {
-          effectiveBorrow = ethers.parseUnits(getBaseSepoliaDemoAmount(), 6);
-          if (hasBorrowed && borrowed.amount >= effectiveBorrow) {
-            console.log(
-              `[Gateway] ${user.slice(0, 10)}... already borrowed ${ethers.formatUnits(borrowed.amount, 6)} USDC, reusing for demo`
-            );
+          if (hasBorrowed) {
             effectiveBorrow = borrowed.amount;
+            console.log(
+              `[Gateway] ${user.slice(0, 10)}... already borrowed ${ethers.formatUnits(effectiveBorrow, 6)} USDC, reusing for demo`
+            );
           } else {
+            effectiveBorrow = ethers.parseUnits(getBaseSepoliaDemoAmount(), 6);
             console.log(
               `[Gateway] Demo mode borrowing ${ethers.formatUnits(effectiveBorrow, 6)} USDC (override)`
             );
@@ -1054,29 +1199,38 @@ export const gatewayYieldPlugin: Plugin = {
         );
 
         if (bestYield.chain === "base") {
-          const swapResult = await swapCircleToMockUsdcOnBase(ctx, amountToTransfer);
-          if (!swapResult.success) {
-            console.log("[Gateway] Swap to mock USDC failed, skipping Compound supply");
+          const baseChain = findChainConfig(ctx, "base");
+          if (!baseChain) {
+            console.log("[Gateway] Base chain config missing, skipping vault deposit");
             continue;
           }
-          const supplyResult = await supplyToCompoundBaseSepolia(ctx, amountToTransfer, {
-            user,
-            apy: bestYield.apy,
-          });
-          if (supplyResult.success) {
+
+          const depositResult = await depositToBaseVault(ctx, baseChain, amountToTransfer, { user });
+          if (depositResult.success) {
+            const deposited = depositResult.amountDeposited ?? amountToTransfer;
             actions.push({
               type: "deposit",
               chain: "base-sepolia",
-              amount: amountToTransfer,
+              amount: deposited,
               details: {
-                protocol: "CompoundIII",
-                apy: bestYield.apy,
-                mocked: supplyResult.mocked ?? false,
+                protocol: "BaseVault",
+                vault: ctx.baseVaultAddress,
+                depositBps: getBaseVaultDepositBps(),
               },
-              txHash: supplyResult.txHash,
+              txHash: depositResult.txHash,
             });
+            const currentPos = crossChainPositions.get(posKey);
+            if (currentPos) {
+              currentPos.amount = deposited;
+            }
+            if (deposited !== amountToTransfer) {
+              console.log(
+                `[Gateway] Base vault deposit used ${ethers.formatUnits(deposited, 6)} ` +
+                `of ${ethers.formatUnits(amountToTransfer, 6)} USDC`
+              );
+            }
           } else {
-            console.log("[Gateway] Aave supply failed after transfer");
+            console.log("[Gateway] Base vault deposit failed after transfer");
           }
         }
 

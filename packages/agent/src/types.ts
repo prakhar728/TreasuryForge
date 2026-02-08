@@ -20,6 +20,7 @@ export interface PluginContext {
   arcRpcUrl: string;
   vaultAddress: string;
   usdcAddress: string;
+  baseVaultAddress: string;
   privateKey: string;
   storkApiKey: string;
   pollInterval: number;

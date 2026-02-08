@@ -104,6 +104,7 @@ class TreasuryAgent {
       arcRpcUrl: process.env.ARC_RPC_URL || "https://sepolia.arc.build/rpc",
       vaultAddress: process.env.ARC_VAULT_ADDRESS || "",
       usdcAddress: process.env.ARC_USDC_ADDRESS || "",
+      baseVaultAddress: process.env.BASE_VAULT_ADDRESS || "",
       privateKey: process.env.PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY || "",
       storkApiKey: process.env.STORK_API_KEY || "",
       pollInterval: parseInt(process.env.AGENT_POLL_INTERVAL || "300000"),
@@ -129,6 +130,9 @@ class TreasuryAgent {
 
     if (!this.ctx.vaultAddress) {
       console.warn("[Agent] WARNING: ARC_VAULT_ADDRESS not set — deploy the vault first");
+    }
+    if (!this.ctx.baseVaultAddress) {
+      console.warn("[Agent] WARNING: BASE_VAULT_ADDRESS not set — Base vault deposits disabled");
     }
     if (!this.ctx.privateKey) {
       console.warn("[Agent] WARNING: PRIVATE_KEY not set — agent cannot sign transactions");
