@@ -6,118 +6,49 @@ TreasuryForge is an autonomous RWA-backed treasury optimizer that runs on Circle
 
 ## System Architecture
 
+```mermaid
+flowchart LR
+  UI["User Interface<br/>React Frontend<br/>- Connect Wallet (MetaMask)<br/>- Deposit USDC<br/>- Set Yield Policy<br/>- View Positions & Yields"]
+  ARC["Arc Chain (Circle L1)<br/>TreasuryVault.sol<br/>- deposit / setPolicy<br/>- borrowRWA / repayRWA<br/>- withdraw<br/>Access Control: DEPOSITOR_ROLE, AGENT_ROLE"]
+  AGENT["Treasury Agent (Node.js)<br/>Poll Loop: monitor → evaluate → execute"]
+  ARC_PLUGIN["arc-rebalance<br/>USYC (RWA)<br/>Stork Oracle"]
+  GATEWAY_PLUGIN["gateway-yield<br/>EVM cross-chain<br/>Base/Avax"]
+  SUI_PLUGIN["sui-yield<br/>DeepBook<br/>Sui DeFi"]
+
+  UI -- "Web3 (ethers.js)" --> ARC
+  ARC -- "Events: Deposited/Borrowed/Repaid" --> AGENT
+  AGENT --> ARC_PLUGIN
+  AGENT --> GATEWAY_PLUGIN
+  AGENT --> SUI_PLUGIN
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              USER INTERFACE                                  │
-│                                                                             │
-│   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │                         React Frontend                               │   │
-│   │   • Connect Wallet (MetaMask)                                       │   │
-│   │   • Deposit USDC to Vault                                           │   │
-│   │   • Set Yield Policy (strategy, max borrow, risk level)             │   │
-│   │   • View Positions & Yields                                         │   │
-│   └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                         │
-│                                    ▼                                         │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                     │
-                                     │ Web3 (ethers.js)
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           ARC CHAIN (Circle L1)                             │
-│                                                                             │
-│   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │                      TreasuryVault.sol                               │   │
-│   │                                                                      │   │
-│   │   • deposit(amount) - User deposits USDC                            │   │
-│   │   • setPolicy(strategy, maxBorrow, riskLevel) - User preferences    │   │
-│   │   • borrowRWA(user, amount, asset) - Agent borrows for yield        │   │
-│   │   • repayRWA(amount) - Agent returns principal + yield              │   │
-│   │   • withdraw(amount) - User withdraws anytime                       │   │
-│   │                                                                      │   │
-│   │   Access Control:                                                    │   │
-│   │   ├── DEPOSITOR_ROLE - Any user                                     │   │
-│   │   └── AGENT_ROLE - Treasury Agent only                              │   │
-│   └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                         │
-│                                    │ Events: Deposited, Borrowed, Repaid     │
-│                                    ▼                                         │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                     │
-                                     │ Monitor Events
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           TREASURY AGENT (Node.js)                          │
-│                                                                             │
-│   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │                         Agent Core                                   │   │
-│   │                                                                      │   │
-│   │   Poll Loop (every 5 minutes):                                      │   │
-│   │   1. monitor() - Gather yield opportunities from all plugins        │   │
-│   │   2. evaluate() - Decide if rebalancing is beneficial               │   │
-│   │   3. execute() - Perform borrows, deposits, redemptions, repays     │   │
-│   └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                         │
-│            ┌───────────────────────┼───────────────────────┐                │
-│            ▼                       ▼                       ▼                │
-│   ┌────────────────┐      ┌────────────────┐      ┌────────────────┐       │
-│   │ arc-rebalance  │      │ gateway-yield  │      │   sui-yield    │       │
-│   │    Plugin      │      │    Plugin      │      │    Plugin      │       │
-│   │                │      │   (Phase 2)    │      │   (Phase 2)    │       │
-│   │ • USYC (RWA)   │      │ • EVM x-chain  │      │ • DeepBook     │       │
-│   │ • Stork Oracle │      │ • Base/Avax    │      │ • Sui DeFi     │       │
-│   └────────────────┘      └────────────────┘      └────────────────┘       │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
 
 ## Data Flow
 
 ### Deposit Flow
-```
-User → MetaMask → TreasuryVault.deposit() → Deposited Event → Agent monitors
+```mermaid
+flowchart LR
+  USER["User"] --> MM["MetaMask"] --> DEPOSIT["TreasuryVault.deposit()"] --> EVENT["Deposited Event"] --> AGENT["Agent monitors"]
 ```
 
 ### Yield Generation Flow (RWA - Bounty 3)
-```
-Agent detects deposit with RWA policy
-    │
-    ▼
-Agent calls vault.borrowRWA(user, amount, USDC)
-    │
-    ▼
-Agent deposits USDC to USYC Teller → receives USYC shares
-    │
-    ▼
-USYC accrues yield from US Treasury backing
-    │
-    ▼
-Agent redeems USYC → receives USDC + yield
-    │
-    ▼
-Agent calls vault.repayRWA(principal + yield)
-    │
-    ▼
-User can withdraw with profits
+```mermaid
+flowchart TD
+  A["Agent detects deposit with RWA policy"] --> B["vault.borrowRWA(user, amount, USDC)"]
+  B --> C["Deposit USDC to USYC Teller → receive USYC shares"]
+  C --> D["USYC accrues yield"]
+  D --> E["Redeem USYC → receive USDC + yield"]
+  E --> F["vault.repayRWA(principal + yield)"]
+  F --> G["User withdraws with profits"]
 ```
 
 ### Cross-Chain Flow (Gateway - Bounty 1, Phase 2)
-```
-Agent detects better yield on Base/Avalanche
-    │
-    ▼
-Agent deposits USDC to GatewayWallet on Arc
-    │
-    ▼
-Circle Gateway burns USDC on Arc
-    │
-    ▼
-Circle Gateway mints USDC on destination chain
-    │
-    ▼
-Agent deploys to yield strategy on destination
-    │
-    ▼
-(reverse flow to return funds)
+```mermaid
+flowchart TD
+  A["Agent detects better yield on Base/Avalanche"] --> B["Deposit USDC to GatewayWallet on Arc"]
+  B --> C["Circle Gateway burns USDC on Arc"]
+  C --> D["Circle Gateway mints USDC on destination chain"]
+  D --> E["Deploy to yield strategy on destination"]
+  E --> F["Reverse flow to return funds"]
 ```
 
 ## Smart Contract Architecture

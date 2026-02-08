@@ -30,6 +30,12 @@ TreasuryForge uses Arc testnet and Circle’s unified USDC balance to simplify c
 - **Ops Console (React)**
   - Deposit + policy UI, live signals, positions, and agent feed.
 
+
+# AI Tools Used
+- We use AI tools to generate moment diagrams and architecture diagrams because it is faster and clearer.
+- We use AI to audit the code as much as possible.
+- We use AI for front-end generation since I’m not a strong front-end developer.
+
 ## Architecture (One‑Page)
 See the full diagram in `docs/architecture.md`.
 
@@ -151,6 +157,8 @@ forge test -vv
 ## Resources
 - Architecture diagram: `docs/architecture.md`
 - DeepBook margin guide: `scripts/DEEPBOOK_MARGIN_YIELD.md`
+
+
 
 ---
 
