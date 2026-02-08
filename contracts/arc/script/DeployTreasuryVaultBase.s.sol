@@ -8,8 +8,8 @@ import {TreasuryVault} from "../src/TreasuryVault.sol";
 /**
  * @title DeployTreasuryVaultBase
  * @notice Deploys TreasuryVault to Base Sepolia
- * @dev Run: source ../../.env && forge script script/DeployTreasuryVaultBase.s.sol:DeployTreasuryVaultBase \
- *          --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast
+ * @dev Run: forge script script/DeployTreasuryVaultBase.s.sol:DeployTreasuryVaultBase \
+ *          --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --dotenv-path ../../.env
  */
 contract DeployTreasuryVaultBase is Script {
     function run() public {

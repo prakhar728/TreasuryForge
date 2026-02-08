@@ -134,6 +134,7 @@ class TreasuryAgent {
     if (!this.ctx.baseVaultAddress) {
       console.warn("[Agent] WARNING: BASE_VAULT_ADDRESS not set — Base vault deposits disabled");
     }
+    console.log(`[Agent] Base vault address: ${this.ctx.baseVaultAddress || "<empty>"}`);
     if (!this.ctx.privateKey) {
       console.warn("[Agent] WARNING: PRIVATE_KEY not set — agent cannot sign transactions");
     }

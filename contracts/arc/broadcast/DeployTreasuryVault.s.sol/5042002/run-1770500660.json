@@ -4,7 +4,7 @@
       "hash": "0x3520c1015c5d3de645a77fd259fdd7255d4ce198b8ee2bfd4976a0a878b6aab4",
       "transactionType": "CREATE",
       "contractName": "TreasuryVault",
-      "contractAddress": "0xe60e488a07c60e92181774667b1e4d4c3bdf370a",
+      "contractAddress": "0xfc052abb90f5bd0b0c161105a9e2f9bf933fdffa",
       "function": null,
       "arguments": [
         "0x3600000000000000000000000000000000000000",
@@ -28,7 +28,7 @@
       "cumulativeGasUsed": "0x4e7b20",
       "logs": [
         {
-          "address": "0xe60e488a07c60e92181774667b1e4d4c3bdf370a",
+          "address": "0xfc052abb90f5bd0b0c161105a9e2f9bf933fdffa",
           "topics": [
             "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0",
             "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -54,7 +54,7 @@
       "effectiveGasPrice": "0x4a831a7bc",
       "from": "0x325e5bd3d7d12ca076d0a8f9f5be7d1de1dd4c83",
       "to": null,
-      "contractAddress": "0xe60e488a07c60e92181774667b1e4d4c3bdf370a"
+      "contractAddress": "0xfc052abb90f5bd0b0c161105a9e2f9bf933fdffa"
     }
   ],
   "libraries": [],

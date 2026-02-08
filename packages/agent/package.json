@@ -11,7 +11,9 @@
     "test": "vitest",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
-    "setup:circle": "tsx scripts/setup-circle.ts"
+    "setup:circle": "tsx scripts/setup-circle.ts",
+    "bridge:base-sui-deepbook": "tsx scripts/wormhole-base-to-sui-deepbook.ts",
+    "bridge:nitro-base-sui-deepbook": "tsx scripts/router-nitro-base-to-sui-deepbook.ts"
   },
   "dependencies": {
     "@bgd-labs/aave-address-book": "^4.44.7",
@@ -21,6 +23,8 @@
     "@mysten/sui": "^2.3.0",
     "@mysten/sui.js": "^0.47.0",
     "@mysten/wallet-standard": "^0.16.14",
+    "@wormhole-foundation/sdk": "4.9.1",
+    "@wormhole-labs/cctp-executor-route": "0.14.0",
     "axios": "^1.6.2",
     "better-sqlite3": "^11.7.0",
     "bs58": "^5.0.0",

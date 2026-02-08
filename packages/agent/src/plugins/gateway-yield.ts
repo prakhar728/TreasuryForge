@@ -160,6 +160,16 @@ async function getBaseSepoliaSigner(ctx: PluginContext): Promise<NonceManager> {
   return nm;
 }
 
+function resetBaseSepoliaNonceManager() {
+  _baseSepoliaNonceManager = null;
+}
+
+function isNonceExpiredError(error: unknown): boolean {
+  const anyErr = error as { code?: string; shortMessage?: string; info?: { error?: { message?: string } } };
+  const msg = anyErr?.shortMessage || anyErr?.info?.error?.message || "";
+  return anyErr?.code === "NONCE_EXPIRED" || msg.toLowerCase().includes("nonce too low");
+}
+
 function computeBaseVaultDepositAmount(amount: bigint): bigint {
   const bps = getBaseVaultDepositBps();
   const min = ethers.parseUnits(getBaseVaultMinDepositUsdc(), 6);
@@ -177,17 +187,35 @@ async function depositToBaseVault(
   amount: bigint,
   meta?: { user?: string }
 ): Promise<{ success: boolean; txHash?: string; amountDeposited?: bigint }> {
+  let attemptedRetry = false;
   try {
     if (!ctx.baseVaultAddress) {
       console.log("[Base Vault] BASE_VAULT_ADDRESS not set, skipping deposit");
       return { success: false };
     }
 
+    console.log(
+      `[Base Vault] Using vault=${ctx.baseVaultAddress} usdc=${baseChain.usdcAddress} rpc=${baseChain.rpcUrl}`
+    );
+
+    if (!ethers.isAddress(ctx.baseVaultAddress)) {
+      console.log(`[Base Vault] Invalid BASE_VAULT_ADDRESS: ${ctx.baseVaultAddress}`);
+      return { success: false };
+    }
+    if (!ethers.isAddress(baseChain.usdcAddress)) {
+      console.log(`[Base Vault] Invalid Base USDC address: ${baseChain.usdcAddress}`);
+      return { success: false };
+    }
+
     const wallet = await getBaseSepoliaSigner(ctx);
+    const walletAddress = await wallet.getAddress();
     const usdc = new ethers.Contract(baseChain.usdcAddress, ERC20_ABI, wallet);
     const vault = new ethers.Contract(ctx.baseVaultAddress, TREASURY_VAULT_ABI, wallet);
+    console.log(
+      `[Base Vault] Contract targets: vault=${String((vault as any).target)} usdc=${String((usdc as any).target)} signer=${walletAddress}`
+    );
 
-    const balance = await usdc.balanceOf(wallet.address);
+    const balance = await usdc.balanceOf(walletAddress);
     let depositAmount = computeBaseVaultDepositAmount(amount);
     if (depositAmount === 0n) {
       console.log("[Base Vault] Computed deposit amount is 0, skipping");
@@ -206,7 +234,7 @@ async function depositToBaseVault(
       depositAmount = adjusted;
     }
 
-    const allowance = await usdc.allowance(wallet.address, ctx.baseVaultAddress);
+    const allowance = await usdc.allowance(walletAddress, ctx.baseVaultAddress);
     if (allowance < depositAmount) {
       const approveTx = await usdc.approve(ctx.baseVaultAddress, depositAmount);
       await approveTx.wait();
@@ -223,6 +251,12 @@ async function depositToBaseVault(
 
     return { success: true, txHash: receipt.hash, amountDeposited: depositAmount };
   } catch (error) {
+    if (!attemptedRetry && isNonceExpiredError(error)) {
+      console.log("[Base Vault] Nonce expired, resetting signer and retrying once");
+      attemptedRetry = true;
+      resetBaseSepoliaNonceManager();
+      return depositToBaseVault(ctx, baseChain, amount, meta);
+    }
     console.error("[Base Vault] Deposit failed:", error);
     return { success: false };
   }
@@ -232,6 +266,7 @@ async function withdrawFromBaseVault(
   ctx: PluginContext,
   amount: bigint
 ): Promise<{ success: boolean; txHash?: string; amountWithdrawn?: bigint }> {
+  let attemptedRetry = false;
   try {
     if (!ctx.baseVaultAddress) {
       console.log("[Base Vault] BASE_VAULT_ADDRESS not set, cannot withdraw");
@@ -262,6 +297,12 @@ async function withdrawFromBaseVault(
 
     return { success: true, txHash: receipt.hash, amountWithdrawn: withdrawAmount };
   } catch (error) {
+    if (!attemptedRetry && isNonceExpiredError(error)) {
+      console.log("[Base Vault] Nonce expired, resetting signer and retrying once");
+      attemptedRetry = true;
+      resetBaseSepoliaNonceManager();
+      return withdrawFromBaseVault(ctx, amount);
+    }
     console.error("[Base Vault] Withdraw failed:", error);
     return { success: false };
   }
@@ -1000,7 +1041,7 @@ export const gatewayYieldPlugin: Plugin = {
 
     if (isBaseSepoliaDemoEnabled()) {
       const cometApy = await fetchCompoundBaseSepoliaSupplyApy();
-      bestYield = { chain: "base", apy: cometApy, protocol: "CompoundIII", tvl: 0 };
+      bestYield = { chain: "base", apy: cometApy, protocol: "BaseVault", tvl: 0 };
     } else {
       // Get current yields
       const chainYields = await getDefiLlamaChainYields();
@@ -1010,6 +1051,10 @@ export const gatewayYieldPlugin: Plugin = {
         curr.apy > best.apy && curr.chain !== "arc" ? curr : best,
         { chain: "", apy: 0, protocol: "", tvl: 0 }
       );
+
+      if (bestYield.chain === "base") {
+        bestYield = { ...bestYield, protocol: "BaseVault" };
+      }
 
       if (bestYield.apy - arcYield < YIELD_DIFF_THRESHOLD) {
         console.log(`[Gateway] No cross-chain opportunity (best: ${bestYield.chain} ${bestYield.apy.toFixed(2)}% vs Arc ${arcYield.toFixed(2)}%)`);
@@ -1033,6 +1078,10 @@ export const gatewayYieldPlugin: Plugin = {
 
     for (const user of depositors) {
       try {
+        if (bestYield.chain === "base" && !ctx.baseVaultAddress) {
+          console.log("[Gateway] BASE_VAULT_ADDRESS not set, skipping Base routing");
+          continue;
+        }
         // Skip if already has cross-chain position
         const posKey = `${user}-gateway`;
         if (crossChainPositions.has(posKey)) {

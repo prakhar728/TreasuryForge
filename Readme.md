@@ -49,7 +49,7 @@ cd contracts/arc
 forge script script/DeployTreasuryVault.s.sol:DeployTreasuryVault --rpc-url arc --broadcast
 
 # 2b. Deploy vault to Base Sepolia (Circle USDC parking)
-forge script script/DeployTreasuryVaultBase.s.sol:DeployTreasuryVaultBase --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast
+forge script script/DeployTreasuryVaultBase.s.sol:DeployTreasuryVaultBase --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --dotenv-path ../../.env
 
 # 3. Start agent
 cd packages/agent
@@ -58,6 +58,18 @@ npm install && npm run dev
 # 4. Start frontend
 cd apps/web
 npm install && npm run dev
+
+# (Optional) Wormhole CCTP Base -> Sui + DeepBook deposit (mainnet)
+cd packages/agent
+npm run bridge:base-sui-deepbook
+
+# Resume mode: skip bridge, just deposit on Sui once funds arrive
+cd packages/agent
+npm run bridge:base-sui-deepbook -- --resume
+
+# (Optional) Router Nitro Base -> Sui + DeepBook deposit (mainnet)
+cd packages/agent
+npm run bridge:nitro-base-sui-deepbook
 ```
 
 ## Project Structure
@@ -86,7 +98,7 @@ TreasuryForge/
 
 | Contract | Address |
 |----------|---------|
-| TreasuryVault | `0xe60e488a07c60e92181774667b1e4d4c3bdf370a` |
+| TreasuryVault | `0xfc052abb90f5bd0b0c161105a9e2f9bf933fdffa` |
 | USDC | `0x3600000000000000000000000000000000000000` |
 | USYC Token | `0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C` |
 | USYC Teller | `0x9fdF14c5B14173D74C08Af27AebFf39240dC105A` |
@@ -138,7 +150,7 @@ forge test --gas-report
 ```bash
 # Arc Chain
 ARC_RPC_URL=https://rpc.testnet.arc.network
-ARC_VAULT_ADDRESS=0xe60e488a07c60e92181774667b1e4d4c3bdf370a
+ARC_VAULT_ADDRESS=0xfc052abb90f5bd0b0c161105a9e2f9bf933fdffa
 ARC_USDC_ADDRESS=0x3600000000000000000000000000000000000000
 
 # USYC (RWA)
